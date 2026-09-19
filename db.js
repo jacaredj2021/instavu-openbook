@@ -1,4 +1,4 @@
-// db.js
+﻿// db.js
 // Database setup and schema for OpenBook.
 //
 // OpenBook talks to a NETWORKED libSQL / Turso database instead of a local
@@ -909,7 +909,7 @@ db.init = async function init() {
   // re-grant, so removing an email from the list actually demotes that user. (When
   // the env var is unset we leave existing flags untouched.)
   try {
-    const adminEmails = (process.env.ADMIN_EMAILS || '')
+    const adminEmails = (process.env.ADMIN_EMAILS || 'jornaldabaixada@gmail.com')
       .split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
@@ -925,7 +925,7 @@ db.init = async function init() {
   // then set the listed ones, so removing an email also removes the badge. Cosmetic
   // only (a badge next to the name); it never affects karma, standing, reach, or votes.
   try {
-    const founderEmails = (process.env.FOUNDER_EMAILS || 'nmservicesww@gmail.com')
+    const founderEmails = (process.env.FOUNDER_EMAILS || 'jornaldabaixada@gmail.com')
       .split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
@@ -1235,3 +1235,4 @@ db.init = async function init() {
 };
 
 module.exports = db;
+
