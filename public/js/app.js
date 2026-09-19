@@ -69,7 +69,7 @@
   // content or personal data ever leaves the client here. ---
   const AN = (function () {
     let sid;
-    try { sid = sessionStorage.getItem('ob_sid'); if (!sid) { sid = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem('ob_sid', sid); } }
+    try { sid = sessionArmazenamento.getItem('ob_sid'); if (!sid) { sid = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionArmazenamento.setItem('ob_sid', sid); } }
     catch (e) { sid = 's' + Date.now(); }
     let queue = [];
     function flush(beacon) {
@@ -265,14 +265,14 @@
 
   function scrollBottom(elm) { if (elm) elm.scrollTop = elm.scrollHeight; }
 
-  // Draft persistence: remember unsent post / comment text in localStorage, so leaving a
+  // Draft persistence: remember unsent post / comment text in localArmazenamento, so leaving a
   // page (or an accidental click then Back) never loses what you were typing. Cleared on
   // a successful submit. Keys: 'post' for the composer, 'comment_<postId>' for a comment.
   const Draft = {
     k: function (key) { return 'ob_draft_' + key; },
-    get: function (key) { try { return localStorage.getItem(this.k(key)) || ''; } catch (e) { return ''; } },
-    set: function (key, val) { try { if (val && val.trim()) localStorage.setItem(this.k(key), val); else localStorage.removeItem(this.k(key)); } catch (e) {} },
-    clear: function (key) { try { localStorage.removeItem(this.k(key)); } catch (e) {} },
+    get: function (key) { try { return localArmazenamento.getItem(this.k(key)) || ''; } catch (e) { return ''; } },
+    set: function (key, val) { try { if (val && val.trim()) localArmazenamento.setItem(this.k(key), val); else localArmazenamento.removeItem(this.k(key)); } catch (e) {} },
+    clear: function (key) { try { localArmazenamento.removeItem(this.k(key)); } catch (e) {} },
   };
 
   /* ============================ boot ============================ */
@@ -425,7 +425,7 @@
     window.addEventListener('appinstalled', () => {
       deferredInstallPrompt = null;
       const b = document.getElementById('installBanner'); if (b) b.remove();
-      try { localStorage.setItem('ob_pwa_installed', '1'); } catch (e) {}
+      try { localArmazenamento.setItem('ob_pwa_installed', '1'); } catch (e) {}
       toast('OpenBook is now on your home screen.');
     });
   }
@@ -438,7 +438,7 @@
     const layout = document.querySelector('.layout');
     if (!layout) return;
     if (pwaStandalone()) return; // already running as the installed app
-    try { if (localStorage.getItem('ob_pwa_installed') === '1' || localStorage.getItem('ob_pwa_dismissed') === '1') return; } catch (e) {}
+    try { if (localArmazenamento.getItem('ob_pwa_installed') === '1' || localArmazenamento.getItem('ob_pwa_dismissed') === '1') return; } catch (e) {}
     const ios = pwaIosSafari();
     if (!deferredInstallPrompt && !ios) return; // not installable yet, and not iOS Safari
     const banner = el(
@@ -451,7 +451,7 @@
     layout.parentNode.insertBefore(banner, layout);
     banner.querySelector('#ibClose').onclick = () => {
       banner.remove();
-      try { localStorage.setItem('ob_pwa_dismissed', '1'); } catch (e) {}
+      try { localArmazenamento.setItem('ob_pwa_dismissed', '1'); } catch (e) {}
     };
     banner.querySelector('#ibInstall').onclick = async () => {
       if (deferredInstallPrompt) {
@@ -634,7 +634,7 @@
 
   // Highlight the matching top tab and side-menu link. Sub-views map back to
   // their parent destination so the right tab stays lit (e.g. a community page
-  // keeps "Communities" active).
+  // keeps "Comunidades" active).
   function setActiveNav(name) {
     const alias = { community: 'communities', group: 'groups' };
     const active = alias[name] || name;
@@ -670,14 +670,14 @@
 
     if (name === 'feed') renderFeed();
     else if (name === 'profile') renderProfile(param || ME.id);
-    else if (name === 'friends') renderFriends();
+    else if (name === 'friends') renderAmigos();
     else if (name === 'messages') renderMessages(param);
     else if (name === 'search') renderSearch(param);
     else if (name === 'marketplace') renderMarketplace();
     else if (name === 'groups') renderGroups();
     else if (name === 'group') renderGroup(param);
     else if (name === 'album') renderAlbum(param);
-    else if (name === 'communities') renderCommunities();
+    else if (name === 'communities') renderComunidades();
     else if (name === 'community') renderCommunity(param);
     else if (name === 'post') renderPost(param);
     else if (name === 'dashboard') renderDashboard();
@@ -706,9 +706,9 @@
   }
 
   // The side menu holds the destinations that are NOT primary top-bar tabs, so
-  // the two menus no longer duplicate each other. Home / Communities /
+  // the two menus no longer duplicate each other. Home / Comunidades /
   // Marketplace / Dashboard live in the top bar; Messages + Notifications live
-  // top-right; everything else (your profile, Friends, Groups) lives here.
+  // top-right; everything else (your profile, Amigos, Groups) lives here.
   function renderLeftRail() {
     const rail = document.getElementById('leftRail');
     // The Admin entry (formerly "Owner dashboard") is for the founder only.
@@ -759,7 +759,7 @@
       { ic: '&#129534;', name: 'Claim your @username', desc: 'Lock in your handle before someone else takes it.', act: () => { go('profile', ME.id); whenReady('editProfileBtn', (b) => b.click()); } },
       { ic: '&#128221;', name: 'Make your first post', desc: 'Share something. People vote it up and you start earning karma.', act: () => { go('feed'); whenReady('composerText', (t) => { t.focus(); t.scrollIntoView({ block: 'center' }); }); } },
       { ic: '&#127968;', name: 'Feed inicial', desc: 'Publicações de amigos, pessoas que você segue e comunidades das quais participa.', act: () => go('feed') },
-      { ic: '&#128227;', name: 'Communities', desc: 'Topic spaces you can join, post in, and vote on, a bit like subreddits.', act: () => go('communities') },
+      { ic: '&#128227;', name: 'Comunidades', desc: 'Topic spaces you can join, post in, and vote on, a bit like subreddits.', act: () => go('communities') },
       { ic: '&#128722;', name: 'Marketplace', desc: 'Buy and sell with other members.', act: () => go('marketplace') },
       { ic: '&#128172;', name: 'Messages', desc: 'Private one to one chats. You can edit or delete anything you send.', act: () => go('messages') },
       { ic: '&#128161;', name: 'Suggestions', desc: 'Propose ideas and vote. The most-wanted get built first, in the open.', act: () => go('suggestions') },
@@ -840,7 +840,7 @@
   }
   function setTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    try { localStorage.setItem('ob_theme', theme); } catch (e) {}
+    try { localArmazenamento.setItem('ob_theme', theme); } catch (e) {}
   }
   function toggleTheme() {
     setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
@@ -963,7 +963,7 @@
   // of the home feed and dismissible. Computed from the signup date we already
   // have, so it needs no server changes and disappears on its own after 30 days.
   function welcomeBannerHtml() {
-    try { if (localStorage.getItem('ob_welcome_dismissed') === '1') return ''; } catch (e) {}
+    try { if (localArmazenamento.getItem('ob_welcome_dismissed') === '1') return ''; } catch (e) {}
     const created = ME && ME.created_at ? new Date(String(ME.created_at).replace(' ', 'T') + 'Z').getTime() : 0;
     if (!created || (Date.now() - created) / 86400000 > 30) return '';
     return '<div class="card welcome-banner" id="welcomeBanner">' +
@@ -986,13 +986,13 @@
         '<button class="tab" data-feed="discover">Discover</button>' +
       '</div><span style="flex:1"></span><span class="muted" id="feedHint" style="font-size:12px;align-self:center"></span></div></div>' +
       '<div id="announcements"></div>' +
-      '<div id="feedPosts"><div class="card"><div class="empty">Loading your feed...</div></div></div>';
-    wireComposer('feedPosts');
+      '<div id="feedPublicações"><div class="card"><div class="empty">Loading your feed...</div></div></div>';
+    wireComposer('feedPublicações');
     const wSuggest = document.getElementById('welcomeSuggest');
     if (wSuggest) wSuggest.onclick = () => go('suggestions');
     const wClose = document.getElementById('welcomeClose');
     if (wClose) wClose.onclick = () => {
-      try { localStorage.setItem('ob_welcome_dismissed', '1'); } catch (e) {}
+      try { localArmazenamento.setItem('ob_welcome_dismissed', '1'); } catch (e) {}
       const b = document.getElementById('welcomeBanner');
       if (b) b.remove();
     };
@@ -1001,15 +1001,15 @@
     const hint = document.getElementById('feedHint');
     function syncFeedUI() {
       view.querySelectorAll('.tab[data-feed]').forEach((t) => t.classList.toggle('active', t.getAttribute('data-feed') === feedMode));
-      hint.textContent = feedMode === 'latest' ? 'Friends, newest first'
+      hint.textContent = feedMode === 'latest' ? 'Amigos, newest first'
         : feedMode === 'discover' ? 'Public posts from across OpenBook'
-        : 'Friends + your communities, ranked';
+        : 'Amigos + your communities, ranked';
     }
     view.querySelectorAll('.tab[data-feed]').forEach((t) => {
-      t.onclick = () => { feedMode = t.getAttribute('data-feed'); syncFeedUI(); loadFeedPosts(); };
+      t.onclick = () => { feedMode = t.getAttribute('data-feed'); syncFeedUI(); loadFeedPublicações(); };
     });
     syncFeedUI();
-    loadFeedPosts();
+    loadFeedPublicações();
     renderRightRail();
   }
 
@@ -1034,8 +1034,8 @@
   // A monotonic token so a slow feed load that is still awaiting network cannot append
   // its (now stale) results after the user has switched tabs and a newer load has run.
   let feedLoadSeq = 0;
-  async function loadFeedPosts() {
-    const container = document.getElementById('feedPosts');
+  async function loadFeedPublicações() {
+    const container = document.getElementById('feedPublicações');
     if (!container) return;
     const myLoad = ++feedLoadSeq;
     container.innerHTML = '<div class="card"><div class="empty">Loading your feed...</div></div>';
@@ -1075,7 +1075,7 @@
       const off = await API.officialAccount();
       if (off && off.user && !off.isFollowing && !off.isSelf) {
         const b = el('<button class="btn btn-primary btn-sm">&#43; Follow ' + esc(off.user.name) + '</button>');
-        b.onclick = async () => { try { await API.follow(off.user.id); b.textContent = 'Following ✓'; b.disabled = true; loadFeedPosts(); } catch (e) { toast(e.message); } };
+        b.onclick = async () => { try { await API.follow(off.user.id); b.textContent = 'Following ✓'; b.disabled = true; loadFeedPublicações(); } catch (e) { toast(e.message); } };
         acts.appendChild(b);
       }
     } catch (e) {}
@@ -1083,7 +1083,7 @@
       const cr = await API.communities();
       ((cr && cr.discover) || []).slice(0, 3).forEach((c) => {
         const b = el('<button class="btn btn-sm">&#43; Join o/' + esc(c.name) + '</button>');
-        b.onclick = async () => { try { await API.joinCommunity(c.id); b.textContent = 'Joined ✓'; b.disabled = true; } catch (e) { toast(e.message); } };
+        b.onclick = async () => { try { await API.joinCommunity(c.id); b.textContent = 'Entrou em ✓'; b.disabled = true; } catch (e) { toast(e.message); } };
         acts.appendChild(b);
       });
     } catch (e) {}
@@ -1400,7 +1400,7 @@
       historyCard +
       growthCard +
       wallCard +
-      '<div class="section-title">Supporter tiers</div>' +
+      '<div class="section-title">Plano de apoiadors</div>' +
       '<div class="tier-grid">' + tiers.map(tierCard).join('') + '</div>' +
       feeNote +
       cryptoBlock +
@@ -1553,9 +1553,9 @@
 
       '<div class="card"><div class="section-title">Your progress ' + badgeHtml + '</div>' +
       '<div class="dash-grid">' +
-        statCard(me.qualified, 'Qualified invites', 'Friends who stayed ' + me.qualifyDays + '+ days as real, active humans.') +
+        statCard(me.qualified, 'Qualified invites', 'Amigos who stayed ' + me.qualifyDays + '+ days as real, active humans.') +
         statCard(me.pending, 'Pending', 'Invited, not yet past the ' + me.qualifyDays + '-day mark.') +
-        statCard(me.monthsEarned, 'Free months earned', 'Months of Premium credited to your account so far.') +
+        statCard(me.monthsEarned, 'Gratuito months earned', 'Months of Premium credited to your account so far.') +
       '</div>' +
       '<div class="prog-wrap"><div class="prog-bar" style="width:' + progress + '%"></div></div>' +
       '<div class="shint" style="font-size:13px;margin-top:6px"><b>' + me.toNextReward + '</b> more qualified invite' +
@@ -1746,7 +1746,7 @@
     if (!rows.length) return '';
     let html = '<div class="card"><div class="section-title">' + esc(title) + '</div>' +
       '<table class="analytics-table"><thead><tr><th>' + (kind === 'reel' ? 'Reel' : 'Post') +
-      '</th><th>Views</th><th>Likes</th><th>Comments</th></tr></thead><tbody>';
+      '</th><th>Views</th><th>Likes</th><th>Comentários</th></tr></thead><tbody>';
     rows.forEach((r) => {
       html += '<tr' + (kind === 'post' ? ' class="link" data-postrow="' + r.id + '"' : '') + '>' +
         '<td>' + esc(r.label || '(untitled)') + (r.community ? ' <span class="pill">community</span>' : '') + '</td>' +
@@ -1767,38 +1767,38 @@
     const tl = Math.max(0, Math.min(4, t.trustLevel || 0));
 
     view.innerHTML =
-      '<div class="card"><div class="pname">Professional dashboard</div>' +
-      '<div class="shint" style="font-size:13px">Your reputation, activity, and content analytics on OpenBook, fully in the open.</div></div>' +
-      '<div class="section-title">Content analytics</div>' +
+      '<div class="card"><div class="pname">Painel profissional</div>' +
+      '<div class="shint" style="font-size:13px">Sua reputação, atividade e análises de conteúdo no INSTAVU, com total transparência.</div></div>' +
+      '<div class="section-title">Análises de conteúdo</div>' +
       '<div class="dash-grid">' +
-        statCard(a.totals.views, 'Views / reach', 'Times your posts were opened by others.') +
-        statCard(a.totals.likesReceived, 'Likes & reactions', 'Across your posts and comments.') +
-        statCard(a.totals.commentsReceived, 'Comments received', '') +
-        statCard(a.totals.netVotes, 'Net votes', 'Upvotes minus downvotes on your community posts and comments.') +
+        statCard(a.totals.views, 'Visualizações / alcance', 'Quantidade de vezes que suas publicações foram abertas por outras pessoas.') +
+        statCard(a.totals.likesReceived, 'Curtidas e reações', 'Em suas publicações e comentários.') +
+        statCard(a.totals.commentsReceived, 'Comentários recebidos', '') +
+        statCard(a.totals.netVotes, 'Votos líquidos', 'Votos positivos menos votos negativos nas suas publicações e comentários das comunidades.') +
       '</div>' +
-      analyticsTable('Your recent posts', a.topPosts, 'post') +
-      '<div class="section-title">Your reputation</div>' +
+      analyticsTable('Your recent posts', a.topPublicações, 'post') +
+      '<div class="section-title">Sua reputação</div>' +
       '<div class="dash-grid">' +
-        statCard(t.karma, 'Karma', 'From up and down votes. Affects ranking only, never your reach.') +
-        statCard(t.standing, 'Standing', 'Account safety score. This is what protects your reach. Votes never lower it.') +
-        statCard('TL' + tl + ' ' + tlNames[tl], 'Trust level', 'Unlocks with account age and clean activity, never with money.') +
-        statCard(timeAgo(d.created_at) + ' ago', 'Joined', '') +
-        statCard((d.supporter && d.supporter.tierName) || 'Free', 'Supporter tier', 'Cosmetic and convenience perks only. Never affects your reach, karma, or votes.') +
+        statCard(t.karma, 'Karma', 'Obtido por meio de votos positivos e negativos. Afeta apenas a classificação, nunca o seu alcance.') +
+        statCard(t.standing, 'Reputação', 'Pontuação de segurança da conta. É ela que protege seu alcance. Os votos não reduzem essa pontuação.') +
+        statCard('TL' + tl + ' ' + tlNames[tl], 'Nível de confiança', 'Desbloqueado com o tempo de conta e atividade adequada, nunca por dinheiro.') +
+        statCard(timeAgo(d.created_at) + ' ago', 'Entrou em', '') +
+        statCard((d.supporter && d.supporter.tierName) || 'Gratuito', 'Plano de apoiador', 'Benefícios apenas cosméticos e de conveniência. Nunca afeta seu alcance, karma ou votos.') +
       '</div>' +
-      '<div class="section-title">Your activity</div>' +
+      '<div class="section-title">Sua atividade</div>' +
       '<div class="dash-grid">' +
-        statCard(s.posts, 'Posts', '') +
-        statCard(s.comments, 'Comments', '') +
-        statCard(s.communities, 'Communities', '') +
-        statCard(s.friends, 'Friends', '') +
-        statCard(s.reactionsReceived, 'Reactions received', '') +
+        statCard(s.posts, 'Publicações', '') +
+        statCard(s.comments, 'Comentários', '') +
+        statCard(s.communities, 'Comunidades', '') +
+        statCard(s.friends, 'Amigos', '') +
+        statCard(s.reactionsReceived, 'Reações recebidas', '') +
       '</div>' +
       storageSection(d.storage, d.supporter) +
-      '<div class="card"><div class="section-title">How OpenBook scoring works</div>' +
+      '<div class="card"><div class="section-title">Como funciona a pontuação do INSTAVU</div>' +
       '<div class="shint" style="font-size:13px;line-height:1.6">' +
-      'OpenBook keeps two separate scores on purpose. <b>Karma</b> moves with community votes and only changes where your content ranks. ' +
-      'It can go negative and it never hides your posts. <b>Standing</b> is your safety score: it goes up with account age and clean activity, ' +
-      'and only confirmed rule violations bring it down. Standing, not votes, is what controls your reach. So you can hold an unpopular ' +
+      'O INSTAVU mantém duas pontuações separadas de propósito. <b>Karma</b> moves with community votes and only changes where your content ranks. ' +
+      'Ele pode ficar negativo e nunca oculta suas publicações. <b>Reputação</b> is your safety score: it goes up with account age and clean activity, ' +
+      'and only confirmed rule violations bring it down. Reputação, not votes, is what controls your reach. So you can hold an unpopular ' +
       'opinion, collect downvotes, and still be seen, as long as your standing is healthy. The ranking and reputation rules are published ' +
       'in the open-source code.</div></div>';
 
@@ -1822,7 +1822,7 @@
     const barColor = pct >= 90 ? '#e5484d' : (pct >= 70 ? '#f5a623' : 'var(--accent, #4f8cff)');
     const atMax = supporter && supporter.tier >= 3;
     return (
-      '<div class="section-title">Storage</div>' +
+      '<div class="section-title">Armazenamento</div>' +
       '<div class="card">' +
         '<div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
           '<div><b>' + fmtSize(usedMB) + '</b> <span class="shint" style="font-size:13px">of ' + fmtSize(capMB) + ' used</span></div>' +
@@ -1831,7 +1831,7 @@
         '<div style="height:10px;border-radius:6px;background:var(--line,#2a2a2a);overflow:hidden">' +
           '<div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:6px;transition:width .4s"></div>' +
         '</div>' +
-        '<div class="shint" style="font-size:12px;margin-top:8px">The space your photos take on OpenBook servers. Delete old posts or photos to free up room' +
+        '<div class="shint" style="font-size:12px;margin-top:8px">O espaço ocupado pelas suas fotos nos servidores do INSTAVU. Delete old posts or photos to free up room' +
           (atMax ? '.' : ', or upgrade your supporter tier for more space.') + '</div>' +
       '</div>'
     );
@@ -1876,7 +1876,7 @@
       '<span class="spacer"></span>' +
       '<select class="composer-audience" id="composerAudience" title="Who can see this post">' +
         '<option value="public">&#127758; Public</option>' +
-        '<option value="friends">&#128100; Friends only</option>' +
+        '<option value="friends">&#128100; Amigos only</option>' +
       '</select>' +
       '<button class="btn btn-primary btn-sm" id="composerPost">Post</button>' +
       '</div>' +
@@ -1887,7 +1887,7 @@
   }
 
   function wireComposer(targetId) {
-    targetId = targetId || 'feedPosts';
+    targetId = targetId || 'feedPublicações';
     const fileInput = document.getElementById('composerFile');
     const docInput = document.getElementById('composerDoc');
     const preview = document.getElementById('composerPreview');
@@ -2046,7 +2046,7 @@
 
   /* ============================ posts ============================ */
 
-  function renderPosts(container, posts, emptyMsg) {
+  function renderPublicações(container, posts, emptyMsg) {
     container.innerHTML = '';
     if (!posts.length) {
       container.innerHTML = '<div class="card"><div class="empty">' + esc(emptyMsg) + '</div></div>';
@@ -2166,7 +2166,7 @@
     return node;
   }
 
-  // Posts the viewer chose to reveal past their content warning this session. Keyed by
+  // Publicações the viewer chose to reveal past their content warning this session. Keyed by
   // post id (not the DOM node) so a post stays revealed even when the feed rebuilds its
   // nodes (e.g. after a sort change), not just across an in-place re-render.
   const cwRevealed = new Set();
@@ -2235,7 +2235,7 @@
       : '';
     stats.innerHTML = left + '<span style="flex:1"></span>' + right;
     const oc = stats.querySelector('[data-open-comments]');
-    if (oc) oc.onclick = () => toggleComments(p.id, node);
+    if (oc) oc.onclick = () => toggleComentários(p.id, node);
   }
 
   function wirePost(node, p) {
@@ -2256,7 +2256,7 @@
     if (sh) sh.onclick = () => shareModal(p, node);
     const cwr = node.querySelector('[data-cw-reveal]');
     if (cwr) cwr.onclick = () => { cwRevealed.add(p.id); renderPostInner(node, p); };
-    node.querySelector('[data-comment]').onclick = () => toggleComments(p.id, node);
+    node.querySelector('[data-comment]').onclick = () => toggleComentários(p.id, node);
   }
 
   async function deletePost(id, node) {
@@ -2333,12 +2333,12 @@
       '<div class="shint" style="font-size:13px">Only you can see what you have saved.</div></div>' +
       '<div id="savedList"><div class="card"><div class="empty">Loading...</div></div></div>';
     try {
-      const r = await API.savedPosts();
+      const r = await API.savedPublicações();
       const list = document.getElementById('savedList');
       if (!r.posts.length) {
         list.innerHTML = '<div class="card"><div class="empty">Nothing saved yet. Tap Save on any post to keep it here.</div></div>';
       } else {
-        renderPosts(list, r.posts, '');
+        renderPublicações(list, r.posts, '');
       }
     } catch (e) { toast(e.message); }
   }
@@ -2391,7 +2391,7 @@
     }).catch((e) => { m.q('#histBody').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
   }
 
-  async function toggleComments(postId, node) {
+  async function toggleComentários(postId, node) {
     const box = node.querySelector('[data-comments]');
     if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
     box.classList.remove('hidden');
@@ -2602,7 +2602,7 @@
       const list = document.getElementById('contactsList');
       if (!list) return;
       if (!r.users.length) {
-        list.innerHTML = '<div class="empty" style="padding:8px;font-size:13px">No friends yet. Find people to add on the Friends page.</div>';
+        list.innerHTML = '<div class="empty" style="padding:8px;font-size:13px">No friends yet. Find people to add on the Amigos page.</div>';
         return;
       }
       list.innerHTML = '';
@@ -2649,7 +2649,7 @@
 
   /* ============================ friends ============================ */
 
-  async function renderFriends() {
+  async function renderAmigos() {
     view.innerHTML =
       '<div class="card"><div class="section-title">Friend requests</div><div id="reqList"><div class="empty">Loading...</div></div></div>' +
       '<div class="card"><div class="section-title">People you may know</div><div id="sugList" class="people-grid"><div class="empty">Loading...</div></div></div>' +
@@ -2730,12 +2730,12 @@
     view.innerHTML =
       '<div class="card"><div class="section-title">Results for "' + esc(q) + '"</div>' +
       '<div class="shint" style="font-size:13px" id="searchStatus">Searching...</div></div>' +
-      '<div id="searchPeople"></div><div id="searchCommunities"></div><div id="searchPosts"></div>';
+      '<div id="searchPeople"></div><div id="searchComunidades"></div><div id="searchPublicações"></div>';
     try {
       const r = await API.searchAll(q);
       const status = document.getElementById('searchStatus');
-      const nPeople = (r.people || []).length, nComm = (r.communities || []).length, nPosts = (r.posts || []).length;
-      if (!nPeople && !nComm && !nPosts) {
+      const nPeople = (r.people || []).length, nComm = (r.communities || []).length, nPublicações = (r.posts || []).length;
+      if (!nPeople && !nComm && !nPublicações) {
         if (status) status.textContent = 'No people, communities, or posts found.';
         renderRightRail();
         return;
@@ -2748,8 +2748,8 @@
         r.people.forEach((u) => g.appendChild(personCard(u, 'view')));
       }
       if (nComm) {
-        const c = document.getElementById('searchCommunities');
-        c.innerHTML = '<div class="card"><div class="section-title">Communities</div><div id="scList" class="search-comm-list"></div></div>';
+        const c = document.getElementById('searchComunidades');
+        c.innerHTML = '<div class="card"><div class="section-title">Comunidades</div><div id="scList" class="search-comm-list"></div></div>';
         const cl = document.getElementById('scList');
         r.communities.forEach((cm) => {
           const row = el('<button type="button" class="search-comm"><span class="sc-name">o/' + esc(cm.name) + '</span>' +
@@ -2758,10 +2758,10 @@
           cl.appendChild(row);
         });
       }
-      if (nPosts) {
-        const c = document.getElementById('searchPosts');
-        c.innerHTML = '<div class="card"><div class="section-title">Posts</div></div><div id="spostList"></div>';
-        renderPosts(document.getElementById('spostList'), r.posts, '');
+      if (nPublicações) {
+        const c = document.getElementById('searchPublicações');
+        c.innerHTML = '<div class="card"><div class="section-title">Publicações</div></div><div id="spostList"></div>';
+        renderPublicações(document.getElementById('spostList'), r.posts, '');
       }
     } catch (e) { toast(e.message); }
     renderRightRail();
@@ -2773,7 +2773,7 @@
   // server-side; this is the owner's button + the explain-and-approve modal.
   var VIS_META = {
     public: { icon: '&#127760;', label: 'Public', desc: 'Anyone on OpenBook can see your profile and your public posts. Best for reaching the most people.' },
-    friends: { icon: '&#128101;', label: 'Friends only', desc: 'Only people you have accepted as friends can see your profile and posts. Everyone else just sees your name and photo.' },
+    friends: { icon: '&#128101;', label: 'Amigos only', desc: 'Only people you have accepted as friends can see your profile and posts. Everyone else just sees your name and photo.' },
     private: { icon: '&#128274;', label: 'Private', desc: 'Only you can see your profile and posts. Nobody else, not even your friends, can open it.' },
   };
   function visibilityBtn(u) {
@@ -2821,7 +2821,7 @@
     let main;
     switch (data.friendStatus) {
       case 'self': main = '<button class="btn btn-soft btn-sm" id="editProfileBtn">Edit profile</button>' + visibilityBtn(u); break;
-      case 'friends': main = '<button class="btn btn-primary btn-sm" data-msg="' + u.id + '">Message</button><button class="btn btn-sm" data-unfriend="' + u.id + '">Friends &#10003;</button>'; break;
+      case 'friends': main = '<button class="btn btn-primary btn-sm" data-msg="' + u.id + '">Message</button><button class="btn btn-sm" data-unfriend="' + u.id + '">Amigos &#10003;</button>'; break;
       case 'requested': main = '<button class="btn btn-sm" data-unfriend="' + u.id + '">Cancel request</button>'; break;
       case 'incoming': main = '<button class="btn btn-primary btn-sm" data-accept="' + u.id + '">Confirm request</button><button class="btn btn-sm" data-decline="' + u.id + '">Delete</button>'; break;
       default: main = '<button class="btn btn-primary btn-sm" data-addfriend="' + u.id + '">Add friend</button>';
@@ -2966,21 +2966,21 @@
       '</div>' +
       '<div id="profileAlbums"></div>' +
       (isMe ? composerHtml() : '') +
-      '<div id="profilePosts"><div class="card"><div class="empty">Loading posts...</div></div></div>' +
+      '<div id="profilePublicações"><div class="card"><div class="empty">Loading posts...</div></div></div>' +
       '</div>';
 
     wireProfileActions(view, data);
     if (isMe) {
-      wireComposer('profilePosts');
+      wireComposer('profilePublicações');
       wireProfilePhotoEdits();
     }
 
     try {
-      const r = await API.userPosts(u.id);
+      const r = await API.userPublicações(u.id);
       const emptyMsg = r.locked
         ? u.name + ' shares posts with friends. Add them as a friend to see their posts.'
         : (isMe ? 'You have not posted anything yet.' : u.name + ' has not posted anything yet.');
-      renderPosts(document.getElementById('profilePosts'), r.posts, emptyMsg);
+      renderPublicações(document.getElementById('profilePublicações'), r.posts, emptyMsg);
     } catch (e) {}
 
     loadProfileAlbums(u, isMe);
@@ -3192,7 +3192,7 @@
       '<div class="shint" style="font-size:12px;margin-bottom:8px">Safety</div>' +
       '<label class="shint" style="font-size:13px;display:block;margin-bottom:4px">Who can @mention you</label>' +
       '<select class="input" id="epMentionPref" style="margin-bottom:14px">' +
-        '<option value="all">Everyone</option><option value="friends">Friends only</option><option value="none">No one</option></select>' +
+        '<option value="all">Everyone</option><option value="friends">Amigos only</option><option value="none">No one</option></select>' +
       '<div class="shint" style="font-size:12px;margin-bottom:6px">Blocked accounts</div>' +
       '<div id="epBlockedList" class="rel-list"><div class="shint" style="font-size:12px">Loading...</div></div>' +
       '<div class="shint" style="font-size:12px;margin:12px 0 6px">Muted accounts</div>' +
@@ -3832,7 +3832,7 @@
     return '$' + v.toLocaleString('en-US', { maximumFractionDigits: 2 });
   }
 
-  const MARKET_CATEGORIES = ['All', 'General', 'Electronics', 'Furniture', 'Clothing', 'Vehicles', 'Property', 'Hobbies', 'Free'];
+  const MARKET_CATEGORIES = ['All', 'General', 'Electronics', 'Furniture', 'Clothing', 'Vehicles', 'Property', 'Hobbies', 'Gratuito'];
   const COND_LABELS = { new: 'New', like_new: 'Like new', good: 'Good', fair: 'Fair', parts: 'For parts' };
   const DELIV_LABELS = { shipping: 'Shipping', pickup: 'Local pickup', both: 'Shipping or pickup' };
   const marketState = { q: '', category: 'All', condition: 'All', location: '', minPrice: '', maxPrice: '' };
@@ -4158,7 +4158,7 @@
     view.innerHTML =
       '<div class="card"><div class="mk-head"><div class="section-title" style="flex:1;margin:0">Groups</div>' +
       '<button class="btn btn-primary btn-sm" id="createGroupBtn">&#10010; Create group</button></div>' +
-      '<div class="page-desc">Spaces you <strong>join to take part in</strong>, like Facebook groups. You join a group first, then you can post in it, and private groups are visible to members only. Looking for open spaces anyone can post in without joining? Those are <a href="#" id="descToComm">Communities</a>.</div></div>' +
+      '<div class="page-desc">Spaces you <strong>join to take part in</strong>, like Facebook groups. You join a group first, then you can post in it, and private groups are visible to members only. Looking for open spaces anyone can post in without joining? Those are <a href="#" id="descToComm">Comunidades</a>.</div></div>' +
       '<div class="card"><div class="section-title">Your groups</div><div id="myGroups" class="grp-grid"><div class="empty">Loading...</div></div></div>' +
       '<div class="card"><div class="section-title">Discover</div><div id="discoverGroups" class="grp-grid"><div class="empty">Loading...</div></div></div>';
     document.getElementById('createGroupBtn').onclick = openCreateGroup;
@@ -4188,7 +4188,7 @@
       const b = el('<button class="btn btn-soft btn-sm btn-block">Open</button>'); b.onclick = () => go('group', g.id); act.appendChild(b);
     } else {
       const b = el('<button class="btn btn-primary btn-sm btn-block">Join</button>');
-      b.onclick = async (e) => { e.stopPropagation(); b.disabled = true; try { await API.joinGroup(g.id); toast('Joined ' + g.name); go('group', g.id); } catch (err) { toast(err.message); b.disabled = false; } };
+      b.onclick = async (e) => { e.stopPropagation(); b.disabled = true; try { await API.joinGroup(g.id); toast('Entrou em ' + g.name); go('group', g.id); } catch (err) { toast(err.message); b.disabled = false; } };
       act.appendChild(b);
     }
     card.querySelector('.grp-cover').onclick = () => go('group', g.id);
@@ -4229,7 +4229,7 @@
       (g.description ? '<div style="margin-top:4px">' + esc(g.description) + '</div>' : '') + '</div>' +
       '<div class="grp-hd-act"></div></div></div>' +
       '<div id="grpComposer"></div>' +
-      '<div id="grpPosts"><div class="card"><div class="empty">Loading posts...</div></div></div>';
+      '<div id="grpPublicações"><div class="card"><div class="empty">Loading posts...</div></div></div>';
 
     const act = view.querySelector('.grp-hd-act');
     if (g.isMember) {
@@ -4237,7 +4237,7 @@
       const leave = el('<button class="btn btn-sm">Leave</button>'); leave.onclick = async () => { if (!window.confirm('Leave this group?')) return; try { await API.leaveGroup(g.id); toast('Left group'); go('groups'); } catch (e) { toast(e.message); } }; act.appendChild(leave);
       if (g.role === 'admin') { const del = el('<button class="btn btn-danger btn-sm">Delete</button>'); del.onclick = async () => { if (!window.confirm('Delete this whole group?')) return; try { await API.deleteGroup(g.id); toast('Group deleted'); go('groups'); } catch (e) { toast(e.message); } }; act.appendChild(del); }
     } else {
-      const join = el('<button class="btn btn-primary btn-sm">Join group</button>'); join.onclick = async () => { try { await API.joinGroup(g.id); toast('Joined'); renderGroup(g.id); } catch (e) { toast(e.message); } }; act.appendChild(join);
+      const join = el('<button class="btn btn-primary btn-sm">Join group</button>'); join.onclick = async () => { try { await API.joinGroup(g.id); toast('Entrou em'); renderGroup(g.id); } catch (e) { toast(e.message); } }; act.appendChild(join);
     }
 
     if (g.isMember) {
@@ -4259,7 +4259,7 @@
         const btn = document.getElementById('gpPost'); btn.disabled = true; btn.textContent = 'Posting...';
         try {
           const r = await API.createGroupPost(g.id, content, file);
-          const cont = document.getElementById('grpPosts');
+          const cont = document.getElementById('grpPublicações');
           const empt = cont.querySelector('.empty');
           if (empt) cont.innerHTML = '';
           cont.prepend(renderPostNode(r.post));
@@ -4270,9 +4270,9 @@
     }
 
     try {
-      const r = await API.groupPosts(g.id);
+      const r = await API.groupPublicações(g.id);
       const emptyMsg = r.locked ? 'Join this private group to see its posts.' : 'No posts in this group yet.';
-      renderPosts(document.getElementById('grpPosts'), r.posts, emptyMsg);
+      renderPublicações(document.getElementById('grpPublicações'), r.posts, emptyMsg);
     } catch (e) {}
     renderRightRail();
   }
@@ -4408,9 +4408,9 @@
     return '<span class="avatar-fallback" style="' + dim + 'background:' + colorFor(c.name || '?') + ';font-size:' + fs + 'px">' + esc(initial) + '</span>';
   }
 
-  async function renderCommunities() {
+  async function renderComunidades() {
     view.innerHTML =
-      '<div class="card"><div class="mk-head"><div class="section-title" style="flex:1;margin:0">Communities</div>' +
+      '<div class="card"><div class="mk-head"><div class="section-title" style="flex:1;margin:0">Comunidades</div>' +
       '<button class="btn btn-primary btn-sm" id="createCommBtn">&#10010; Create community</button></div>' +
       '<div class="page-desc">Open spaces built around a topic, like subreddits. <strong>Subscribe to follow</strong> a public community in your home feed, but you can post and comment in any public one without joining. Looking for member-only spaces you join first? Those are <a href="#" id="descToGroups">Groups</a>.</div></div>' +
       '<div class="card"><div class="section-title">Your communities</div><div id="subComm" class="grp-grid"><div class="empty">Loading...</div></div></div>' +
@@ -4441,7 +4441,7 @@
       const b = el('<button class="btn btn-soft btn-sm btn-block">Open</button>'); b.onclick = () => go('community', c.id); act.appendChild(b);
     } else {
       const b = el('<button class="btn btn-primary btn-sm btn-block">Join</button>');
-      b.onclick = async (e) => { e.stopPropagation(); b.disabled = true; try { await API.joinCommunity(c.id); toast('Joined o/' + c.name); go('community', c.id); } catch (err) { toast(err.message); b.disabled = false; } };
+      b.onclick = async (e) => { e.stopPropagation(); b.disabled = true; try { await API.joinCommunity(c.id); toast('Entrou em o/' + c.name); go('community', c.id); } catch (err) { toast(err.message); b.disabled = false; } };
       act.appendChild(b);
     }
     card.querySelector('.comm-row').onclick = () => go('community', c.id);
@@ -4499,7 +4499,7 @@
         '<option value="all">All time</option><option value="week">This week</option><option value="day">Today</option>' +
       '</select>' +
       '<span style="flex:1"></span><button class="btn btn-primary btn-sm" id="newCommPost">&#10010; Create post</button></div></div>' +
-      '<div id="commPosts"><div class="card"><div class="empty">Loading posts...</div></div></div>';
+      '<div id="commPublicações"><div class="card"><div class="empty">Loading posts...</div></div></div>';
 
     const act = view.querySelector('.comm-act');
     if (c.isMember) {
@@ -4507,7 +4507,7 @@
       const leave = el('<button class="btn btn-sm">Leave</button>'); leave.onclick = async () => { try { await API.leaveCommunity(c.id); toast('Left o/' + c.name); renderCommunity(c.id); } catch (e) { toast(e.message); } }; act.appendChild(leave);
       if (c.role === 'mod') { const del = el('<button class="btn btn-danger btn-sm">Delete</button>'); del.onclick = async () => { if (!window.confirm('Delete this community and all its posts?')) return; try { await API.deleteCommunity(c.id); toast('Community deleted'); go('communities'); } catch (e) { toast(e.message); } }; act.appendChild(del); }
     } else {
-      const join = el('<button class="btn btn-primary btn-sm">Join</button>'); join.onclick = async () => { try { await API.joinCommunity(c.id); toast('Joined'); renderCommunity(c.id); } catch (e) { toast(e.message); } }; act.appendChild(join);
+      const join = el('<button class="btn btn-primary btn-sm">Join</button>'); join.onclick = async () => { try { await API.joinCommunity(c.id); toast('Entrou em'); renderCommunity(c.id); } catch (e) { toast(e.message); } }; act.appendChild(join);
     }
     // Transparency: anyone can read the public mod log. Mods/admins get the queue.
     const isMod = c.role === 'mod' || ME.isAdmin;
@@ -4520,20 +4520,20 @@
       winSel.classList.toggle('hidden', communitySort !== 'top');
     }
     view.querySelectorAll('.tab').forEach((t) => {
-      t.onclick = () => { communitySort = t.getAttribute('data-sort'); syncSortUI(); loadCommunityPosts(c); };
+      t.onclick = () => { communitySort = t.getAttribute('data-sort'); syncSortUI(); loadCommunityPublicações(c); };
     });
     winSel.value = communityWindow;
-    winSel.onchange = () => { communityWindow = winSel.value; loadCommunityPosts(c); };
+    winSel.onchange = () => { communityWindow = winSel.value; loadCommunityPublicações(c); };
     syncSortUI();
-    loadCommunityPosts(c);
+    loadCommunityPublicações(c);
     renderRightRail();
   }
 
-  async function loadCommunityPosts(c) {
-    const cont = document.getElementById('commPosts');
+  async function loadCommunityPublicações(c) {
+    const cont = document.getElementById('commPublicações');
     if (!cont) return;
     try {
-      const r = await API.communityPosts(c.id, communitySort, communityWindow);
+      const r = await API.communityPublicações(c.id, communitySort, communityWindow);
       if (r.locked) { cont.innerHTML = '<div class="card"><div class="empty">Join this private community to see its posts.</div></div>'; return; }
       if (!r.posts.length) { cont.innerHTML = '<div class="card"><div class="empty">No posts yet. Be the first to post.</div></div>'; return; }
       cont.innerHTML = '';
@@ -4654,7 +4654,7 @@
       'by <span class="link" data-profile="' + p.author.id + '">' + esc(p.author.name) + verifTick(p.author) + '</span> &#183; ' + timeAgo(p.created_at) +
       (p.edited ? ' &#183; <span class="edited-link" data-history>edited</span>' : '') + '</div>' +
       (p.removed ? '<div class="modbanner">This post was removed by a moderator.</div>' : '') +
-      (p.locked ? '<div class="modbanner modbanner-soft">&#128274; Comments are locked.</div>' : '') +
+      (p.locked ? '<div class="modbanner modbanner-soft">&#128274; Comentários are locked.</div>' : '') +
       (p.title ? '<div class="cpost-title" style="font-size:22px;cursor:default">' + esc(p.title) + '</div>' : '') +
       (p.type === 'link' && p.url ? '<a href="' + esc(safeHref(p.url)) + '" target="_blank" rel="noopener">' + esc(p.url) + '</a>' : '') +
       (p.content ? '<div class="post-body">' + richText(p.content) + '</div>' : '') +
@@ -4693,7 +4693,7 @@
     if (man) man.onclick = async () => { try { const r = await API.modAnnounce(p.id, !p.announcement); toast(r.announcement ? 'Pinned as an announcement' : 'Announcement removed'); renderPost(p.id); } catch (e) { toast(e.message); } };
 
     const csec = el('<div class="card"><div class="mk-head" style="margin-bottom:6px">' +
-      '<div class="section-title" style="margin:0">Comments</div><span style="flex:1"></span>' +
+      '<div class="section-title" style="margin:0">Comentários</div><span style="flex:1"></span>' +
       '<select class="input" id="commentSortSel" style="width:auto;padding:4px 8px">' +
         '<option value="best">Best</option><option value="new">New</option>' +
         '<option value="top">Top</option><option value="controversial">Controversial</option>' +
