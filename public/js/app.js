@@ -717,14 +717,14 @@
       '<div class="card" style="padding:8px">' +
       '<div class="side-link" data-go="profile">' + avatar(ME, 32) + '<span>' + esc(ME.name) + '</span></div>' +
       (isOwner ? '<a class="side-link" href="/admin" style="text-decoration:none"><span class="ic">&#9881;&#65039;</span><span>Admin</span></a>' : '') +
-      '<div class="side-link" id="getStartedLink"><span class="ic">&#128640;</span><span>Get started</span></div>' +
-      '<div class="side-link" data-go="friends"><span class="ic">&#128101;</span><span>Friends</span><span class="badge side-badge hidden" id="friendsBadge">0</span></div>' +
-      '<div class="side-link" data-go="groups"><span class="ic">&#127760;</span><span>Groups</span></div>' +
-      '<div class="side-link" data-go="saved"><span class="ic">&#128278;</span><span>Saved</span></div>' +
-      '<div class="side-link" data-go="invite"><span class="ic">&#127881;</span><span>Invite friends</span></div>' +
-      '<div class="side-link" data-go="jury"><span class="ic">&#9878;&#65039;</span><span>Jury duty</span><span class="badge side-badge hidden" id="juryBadge">0</span></div>' +
-      '<div class="side-link" data-go="suggestions"><span class="ic">&#128161;</span><span>Suggest us</span></div>' +
-      '<div class="side-link" data-go="support"><span class="ic">&#10084;&#65039;</span><span>Support OpenBook</span></div>' +
+      '<div class="side-link" id="getStartedLink"><span class="ic">&#128640;</span><span>Começar</span></div>' +
+      '<div class="side-link" data-go="friends"><span class="ic">&#128101;</span><span>Amigos</span><span class="badge side-badge hidden" id="friendsBadge">0</span></div>' +
+      '<div class="side-link" data-go="groups"><span class="ic">&#127760;</span><span>Grupos</span></div>' +
+      '<div class="side-link" data-go="saved"><span class="ic">&#128278;</span><span>Salvos</span></div>' +
+      '<div class="side-link" data-go="invite"><span class="ic">&#127881;</span><span>Convidar amigos</span></div>' +
+      '<div class="side-link" data-go="jury"><span class="ic">&#9878;&#65039;</span><span>Participar do júri</span><span class="badge side-badge hidden" id="juryBadge">0</span></div>' +
+      '<div class="side-link" data-go="suggestions"><span class="ic">&#128161;</span><span>Sugira para nós</span></div>' +
+      '<div class="side-link" data-go="support"><span class="ic">&#10084;&#65039;</span><span>Apoie o INSTAVU</span></div>' +
       '<div class="side-link" id="leftLogout"><span class="ic">&#128682;</span><span>Log out</span></div>' +
       '</div>' +
       '<nav class="rail-foot">' +
@@ -758,21 +758,21 @@
     const sections = [
       { ic: '&#129534;', name: 'Claim your @username', desc: 'Lock in your handle before someone else takes it.', act: () => { go('profile', ME.id); whenReady('editProfileBtn', (b) => b.click()); } },
       { ic: '&#128221;', name: 'Make your first post', desc: 'Share something. People vote it up and you start earning karma.', act: () => { go('feed'); whenReady('composerText', (t) => { t.focus(); t.scrollIntoView({ block: 'center' }); }); } },
-      { ic: '&#127968;', name: 'Home feed', desc: 'Posts from friends, people you follow, and the communities you join.', act: () => go('feed') },
+      { ic: '&#127968;', name: 'Feed inicial', desc: 'Publicações de amigos, pessoas que você segue e comunidades das quais participa.', act: () => go('feed') },
       { ic: '&#128227;', name: 'Communities', desc: 'Topic spaces you can join, post in, and vote on, a bit like subreddits.', act: () => go('communities') },
       { ic: '&#128722;', name: 'Marketplace', desc: 'Buy and sell with other members.', act: () => go('marketplace') },
       { ic: '&#128172;', name: 'Messages', desc: 'Private one to one chats. You can edit or delete anything you send.', act: () => go('messages') },
       { ic: '&#128161;', name: 'Suggestions', desc: 'Propose ideas and vote. The most-wanted get built first, in the open.', act: () => go('suggestions') },
-      { ic: '&#127881;', name: 'Invite friends', desc: 'Every 5 friends who join unlock Premium for you.', act: () => go('invite') },
+      { ic: '&#127881;', name: 'Convidar amigos', desc: 'A cada 5 amigos que entrarem, você desbloqueia o Premium.', act: () => go('invite') },
       { ic: '&#128202;', name: 'Dashboard', desc: 'Your karma, account standing, and post analytics, fully transparent.', act: () => go('dashboard') },
-      { ic: '&#10084;&#65039;', name: 'Support OpenBook', desc: 'Optional. Keeps us ad-free and independent. Money never buys reach.', act: () => go('support') },
+      { ic: '&#10084;&#65039;', name: 'Apoie o INSTAVU', desc: 'Opcional. Ajuda a manter o INSTAVU sem anúncios e independente. Dinheiro nunca compra alcance.', act: () => go('support') },
     ];
     const rows = sections.map((s, i) =>
       '<button class="gs-row" data-i="' + i + '"><span class="gs-ic">' + s.ic + '</span>' +
       '<span class="gs-tx"><span class="gs-name">' + esc(s.name) + '</span><span class="gs-desc">' + esc(s.desc) + '</span></span>' +
       '<span class="gs-go">&#8250;</span></button>').join('');
     const m = modal(
-      '<div class="mh"><h3>&#128640; Get started on OpenBook</h3></div>' +
+      '<div class="mh"><h3>&#128640; Comece no INSTAVU</h3></div>' +
       '<div class="mc"><div class="shint" style="font-size:13px;margin-bottom:10px;line-height:1.5">Here is what each part of OpenBook is for. Tap any row to jump straight there.</div>' +
       '<div class="gs-list">' + rows + '</div></div>'
     );
@@ -781,7 +781,7 @@
     });
   }
 
-  // Light fetch to show a count on the "Jury duty" rail entry when the user has
+  // Light fetch to show a count on the "Participar do júri" rail entry when the user has
   // open cases they have not yet voted on.
   function refreshJuryBadge() {
     API.juryDuties().then(({ duties }) => {
@@ -795,7 +795,7 @@
 
   async function renderJury() {
     view.innerHTML =
-      '<div class="card"><div class="pname">&#9878;&#65039; Jury duty</div>' +
+      '<div class="card"><div class="pname">&#9878;&#65039; Participar do júri</div>' +
       '<div class="shint" style="font-size:13px;line-height:1.5">You were randomly selected to help decide whether flagged content should stay or go. Judge the content, not the person. You are anonymous, the majority decides, and the outcome (with the ballot) is posted to the public <a href="/mod-log" target="_blank" style="color:var(--brand)">transparency log</a>.</div></div>' +
       '<div id="juryList"><div class="card"><div class="empty">Loading your cases...</div></div></div>';
     try {
@@ -3751,12 +3751,12 @@
         act: () => { go('profile', ME.id); whenReady('editProfileBtn', (b) => b.click()); } },
       { ic: '&#128221;', t: 'Write your first post', s: 'People vote it up, so you start earning karma and account standing.',
         act: () => { go('feed'); whenReady('composerText', (t) => { t.focus(); t.scrollIntoView({ block: 'center' }); }); } },
-      { ic: '&#127881;', t: 'Invite friends', s: 'Every 5 friends who join unlock Premium for you.', act: () => go('invite') },
+      { ic: '&#127881;', t: 'Invite friends', s: 'A cada 5 amigos que entrarem, você desbloqueia o Premium.', act: () => go('invite') },
       { ic: '&#128161;', t: 'Share a suggestion', s: 'The most upvoted ideas get built first, in the open.', act: () => go('suggestions') },
       { ic: '&#127760;', t: 'Start or join a community', s: 'Gather people around something you love.', act: () => go('communities') },
       { ic: '&#10084;&#65039;', t: 'Support OpenBook', s: 'Keep us ad-free and independent. Totally optional.', act: () => go('support') },
     ];
-    const card = el('<div class="onboard-card"><div class="onboard-h">&#128640; Get started on OpenBook</div><div class="onboard-steps"></div></div>');
+    const card = el('<div class="onboard-card"><div class="onboard-h">&#128640; Comece no INSTAVU</div><div class="onboard-steps"></div></div>');
     const wrap = card.querySelector('.onboard-steps');
     steps.forEach((st) => {
       const row = el('<button class="onboard-step"><span class="oi">' + st.ic + '</span>' +

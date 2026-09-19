@@ -1,6 +1,6 @@
 {
-  "name": "OpenBook",
-  "short_name": "OpenBook",
+  "name": "INSTAVU",
+  "short_name": "INSTAVU",
   "description": "A social network where your data is yours. No ads, no surveillance, money never buys reach.",
   "start_url": "/app",
   "scope": "/",

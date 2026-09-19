@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>OpenBook</title>
+  <title>INSTAVU</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%235b51e8'/><text x='16' y='23' font-size='20' fill='white' text-anchor='middle' font-family='Arial' font-weight='bold'>O</text></svg>" />
   <!-- Progressive Web App: installable to the home screen -->
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="OpenBook" />
+  <meta name="apple-mobile-web-app-title" content="INSTAVU" />
   <meta name="mobile-web-app-capable" content="yes" />
   <script>try{var t=localStorage.getItem('ob_theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   <link rel="stylesheet" href="/css/style.css" />
@@ -22,21 +22,21 @@
     <div class="topbar-left">
       <div class="logo" data-nav="feed">
         <span class="brand-mark">O</span>
-        <span class="brand name">OpenBook</span>
+        <span class="brand name">INSTAVU</span>
       </div>
       <div class="search">
-        <input type="text" id="searchInput" placeholder="Search OpenBook" autocomplete="off" />
+        <input type="text" id="searchInput" placeholder="Search INSTAVU" autocomplete="off" />
       </div>
     </div>
     <nav class="nav-primary">
-      <button class="nav-tab" data-nav="feed" title="Home"><span class="ti">&#127968;</span><span class="tl">Home</span></button>
-      <button class="nav-tab" data-nav="communities" title="Communities"><span class="ti">&#128227;</span><span class="tl">Communities</span></button>
-      <button class="nav-tab" data-nav="marketplace" title="Marketplace"><span class="ti">&#128722;</span><span class="tl">Marketplace</span></button>
-      <button class="nav-tab" data-nav="dashboard" title="Professional dashboard"><span class="ti">&#128202;</span><span class="tl">Dashboard</span></button>
+      <button class="nav-tab" data-nav="feed" title="Home"><span class="ti">&#127968;</span><span class="tl">Início</span></button>
+      <button class="nav-tab" data-nav="communities" title="Communities"><span class="ti">&#128227;</span><span class="tl">Comunidades</span></button>
+      <button class="nav-tab" data-nav="marketplace" title="Marketplace"><span class="ti">&#128722;</span><span class="tl">Mercado</span></button>
+      <button class="nav-tab" data-nav="dashboard" title="Professional dashboard"><span class="ti">&#128202;</span><span class="tl">Painel</span></button>
     </nav>
     <div class="topbar-right">
       <button class="nav-btn theme-btn" id="themeBtn" title="Toggle light / dark mode" aria-label="Toggle light / dark mode">
-        <span class="ti" id="themeIcon">&#127769;</span><span class="tl" id="themeLabel">Dark</span>
+        <span class="ti" id="themeIcon">&#127769;</span><span class="tl" id="themeLabel">Escuro</span>
       </button>
       <button class="nav-btn" data-nav="messages" title="Messages">
         &#128172;<span class="badge hidden" id="messagesBadge">0</span>
@@ -50,7 +50,7 @@
 
   <!-- Notifications dropdown -->
   <div class="dropdown hidden" id="notifDropdown">
-    <div class="dhead"><h3>Notifications</h3></div>
+    <div class="dhead"><h3>Notificações</h3></div>
     <div id="notifList"></div>
   </div>
 
@@ -63,10 +63,10 @@
 
   <!-- Mobile-only bottom navigation (the primary destinations). -->
   <nav class="bottom-nav" id="bottomNav">
-    <button class="nav-tab" data-nav="feed" title="Home"><span class="ti">&#127968;</span><span class="tl">Home</span></button>
-    <button class="nav-tab" data-nav="communities" title="Communities"><span class="ti">&#128227;</span><span class="tl">Communities</span></button>
-    <button class="nav-tab" data-nav="marketplace" title="Marketplace"><span class="ti">&#128722;</span><span class="tl">Market</span></button>
-    <button class="nav-tab" data-nav="dashboard" title="Dashboard"><span class="ti">&#128202;</span><span class="tl">Dashboard</span></button>
+    <button class="nav-tab" data-nav="feed" title="Home"><span class="ti">&#127968;</span><span class="tl">Início</span></button>
+    <button class="nav-tab" data-nav="communities" title="Communities"><span class="ti">&#128227;</span><span class="tl">Comunidades</span></button>
+    <button class="nav-tab" data-nav="marketplace" title="Marketplace"><span class="ti">&#128722;</span><span class="tl">Mercado</span></button>
+    <button class="nav-tab" data-nav="dashboard" title="Dashboard"><span class="ti">&#128202;</span><span class="tl">Painel</span></button>
   </nav>
 
   <!-- Mount points for modals, toasts, story viewer -->
