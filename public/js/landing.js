@@ -1,0 +1,342 @@
+// landing.js
+// Handles the login and signup forms on the landing page.
+
+(function () {
+  // If already logged in, go straight to the app. Use replace (not href) so this
+  // landing page is not left in history; Back from the app then never bounces back
+  // through here. (The server also 302s an authenticated GET / to /app, so this is
+  // a belt-and-suspenders fallback for a cached page or a just-became-valid session.)
+  API.me().then(() => { window.location.replace('/app'); }).catch(() => {});
+
+  // Surface a Google sign-in error handed back in the URL (?autherror=...).
+  (function showAuthError() {
+    try {
+      const err = new URLSearchParams(location.search).get('autherror');
+      if (!err) return;
+      const map = {
+        google_failed: 'Google sign-in did not complete. Please try again.',
+        google_unavailable: 'Google sign-in is not available right now.',
+        google_email: 'Your Google account email is not verified, so we could not sign you in.',
+        signups_full: 'OpenBook is at capacity for now, so new sign-ups are paused.',
+        email_exists: 'An account with this email already exists. Log in with your password, then connect Google from Settings.',
+        connect_failed: 'Could not connect your Google account. Please log in and try again from Settings.',
+      };
+      const box = document.getElementById('loginAlert');
+      if (box) box.innerHTML = '<div class="alert">' + (map[err] || 'Sign-in failed. Please try again.') + '</div>';
+      history.replaceState({}, '', location.pathname);
+    } catch (e) {}
+  })();
+
+  // Founding-member scarcity: the first 5000 accounts keep the Pioneer badge forever.
+  // A live, honest count is a free, on-brand nudge to sign up now rather than later.
+  (function foundingSpots() {
+    var box = document.getElementById('foundingSpots');
+    if (!box) return;
+    fetch('/api/community-stats').then(function (r) { return r.json(); }).then(function (s) {
+      if (!s || !s.cap || s.signupsFull) return;
+      var left = Math.max(0, s.cap - (s.users || 0));
+      if (left <= 0) return;
+      var num = (s.users || 0) + 1;
+      box.innerHTML = '&#9873; You would be founding member <b>#' + num + '</b>. Only <b>' + left.toLocaleString() +
+        '</b> of the first ' + s.cap.toLocaleString() + ' founding spots left, and founders keep the Pioneer badge forever.';
+      box.classList.remove('hidden');
+    }).catch(function () {});
+  })();
+
+  const loginView = document.getElementById('loginView');
+  const signupView = document.getElementById('signupView');
+
+  document.getElementById('toSignup').addEventListener('click', () => {
+    loginView.classList.add('hidden');
+    signupView.classList.remove('hidden');
+    animateCard();
+  });
+  document.getElementById('toLogin').addEventListener('click', () => {
+    signupView.classList.add('hidden');
+    loginView.classList.remove('hidden');
+    animateCard();
+  });
+
+  const forgotView = document.getElementById('forgotView');
+  document.getElementById('toForgot').addEventListener('click', () => {
+    loginView.classList.add('hidden');
+    forgotView.classList.remove('hidden');
+    animateCard();
+  });
+  document.getElementById('forgotToLogin').addEventListener('click', () => {
+    forgotView.classList.add('hidden');
+    loginView.classList.remove('hidden');
+    animateCard();
+  });
+  document.getElementById('forgotForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('forgotBtn');
+    const email = document.getElementById('forgotEmail').value.trim();
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    try {
+      await API.forgotPassword(email);
+    } catch (err) { /* never reveal whether the email exists */ }
+    // Always show the same message (anti account-enumeration).
+    document.getElementById('forgotAlert').innerHTML =
+      '<div class="alert alert-ok">If an account exists for that email, a password reset link is on its way. Check your inbox.</div>';
+    btn.disabled = false;
+    btn.textContent = 'Send reset link';
+  });
+
+  function animateCard() {
+    if (window.anime) {
+      anime({ targets: '#authCard', opacity: [0.4, 1], translateY: [8, 0], duration: 350, easing: 'easeOutCubic' });
+    }
+  }
+
+  // Show/hide password toggles.
+  document.querySelectorAll('.pw-toggle').forEach((b) => {
+    b.addEventListener('click', () => {
+      const inp = document.getElementById(b.getAttribute('data-pw'));
+      if (!inp) return;
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      b.textContent = show ? 'Hide' : 'Show';
+      b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    });
+  });
+
+  function showAlert(el, message) {
+    el.innerHTML = '<div class="alert">' + escapeHtml(message) + '</div>';
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // --- Cloudflare Turnstile (optional CAPTCHA) --------------------------------
+  // Renders only when the server reports a public site key (TURNSTILE_SITE_KEY).
+  // Until then nothing loads and the forms behave exactly as before, so building
+  // this changes nothing for the live site until the two keys are added. The site
+  // key is public by design; the secret never leaves the server. We let the
+  // server be the source of truth (it fails open on a Cloudflare outage), so we
+  // never hard-block a submit here; we just attach the token and reset the widget
+  // after a failure so the next try gets a fresh one.
+  const captcha = { siteKey: '', login: null, signup: null };
+  function captchaToken(which) {
+    try {
+      if (captcha.siteKey && window.turnstile && captcha[which] != null) return turnstile.getResponse(captcha[which]) || '';
+    } catch (e) {}
+    return '';
+  }
+  function captchaReset(which) {
+    try { if (captcha.siteKey && window.turnstile && captcha[which] != null) turnstile.reset(captcha[which]); } catch (e) {}
+  }
+  // Reveal whichever alternative sign-in buttons are available, and wire the passkey
+  // one. Called once with the server config.
+  function show(id) { const n = document.getElementById(id); if (n) n.classList.remove('hidden'); }
+  function setupAltAuth(cfg) {
+    const googleOn = !!(cfg && cfg.googleEnabled);
+    const passkeyOn = !!(cfg && cfg.webauthnEnabled) && window.OBPasskey && OBPasskey.supported();
+    if (googleOn) { show('googleLoginLink'); show('googleAuthSignup'); }
+    if (passkeyOn) { show('passkeyLoginBtn'); wirePasskeyLogin(); }
+    if (googleOn || passkeyOn) show('altAuthLogin');
+  }
+  let _passkeyWired = false;
+  function wirePasskeyLogin() {
+    if (_passkeyWired) return; _passkeyWired = true;
+    const btn = document.getElementById('passkeyLoginBtn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const orig = btn.innerHTML;
+      btn.disabled = true; btn.textContent = 'Waiting for your passkey...';
+      try {
+        await OBPasskey.login(deviceFingerprint());
+        window.location.replace('/app');
+      } catch (err) {
+        btn.disabled = false; btn.innerHTML = orig;
+        // A user dismissing the native prompt is a normal cancel, not an error to shout about.
+        if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) return;
+        showAlert(document.getElementById('loginAlert'), (err && err.message) || 'Passkey sign-in failed. Please try again.');
+      }
+    });
+  }
+
+  (function initCaptcha() {
+    API.config().then((cfg) => {
+      // Alternative sign-in options under the login form: a passkey button (shown
+      // when the browser supports passkeys) and/or a Google button (shown when the
+      // server has Google configured). One "or" divider covers whichever appear. The
+      // signup view shows only Google (creating a brand-new account).
+      setupAltAuth(cfg);
+      const key = cfg && cfg.turnstileSiteKey;
+      if (!key) return; // dormant: no CAPTCHA configured
+      captcha.siteKey = key;
+      // Global onload callback the Turnstile script calls once it is ready.
+      window.__obTurnstileReady = function () {
+        try { captcha.login = turnstile.render('#loginCaptcha', { sitekey: key }); } catch (e) {}
+        try { captcha.signup = turnstile.render('#signupCaptcha', { sitekey: key }); } catch (e) {}
+      };
+      const s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=__obTurnstileReady';
+      s.async = true; s.defer = true;
+      document.head.appendChild(s);
+    }).catch(() => { /* config fetch failed: leave the forms CAPTCHA-free */ });
+  })();
+
+  // --- Anti-sybil: signup proof-of-work + a coarse device fingerprint ---
+  // Compact synchronous SHA-256 (ASCII in, hex out), so the proof-of-work loop
+  // runs fast in a tight loop without thousands of async Web Crypto calls.
+  function sha256hex(ascii) {
+    function rr(v, a) { return (v >>> a) | (v << (32 - a)); }
+    const mp = Math.pow; const maxWord = mp(2, 32); let result = '';
+    const words = []; const asciiBitLength = ascii.length * 8;
+    let hash = sha256hex.h = sha256hex.h || [];
+    const k = sha256hex.k = sha256hex.k || []; let primeCounter = k.length;
+    const isComposite = {};
+    for (let candidate = 2; primeCounter < 64; candidate++) {
+      if (!isComposite[candidate]) {
+        for (let i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+        hash[primeCounter] = (mp(candidate, 0.5) * maxWord) | 0;
+        k[primeCounter++] = (mp(candidate, 1 / 3) * maxWord) | 0;
+      }
+    }
+    ascii += '\x80';
+    while (ascii.length % 64 - 56) ascii += '\x00';
+    for (let i = 0; i < ascii.length; i++) {
+      const j = ascii.charCodeAt(i);
+      if (j >> 8) return '';
+      words[i >> 2] |= j << ((3 - i) % 4) * 8;
+    }
+    words[words.length] = (asciiBitLength / maxWord) | 0;
+    words[words.length] = asciiBitLength;
+    for (let j = 0; j < words.length;) {
+      const w = words.slice(j, j += 16);
+      const oldHash = hash;
+      hash = hash.slice(0, 8);
+      for (let i = 0; i < 64; i++) {
+        const w15 = w[i - 15], w2 = w[i - 2];
+        const a = hash[0], e = hash[4];
+        const temp1 = hash[7]
+          + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25))
+          + ((e & hash[5]) ^ (~e & hash[6]))
+          + k[i]
+          + (w[i] = (i < 16) ? w[i] : (
+            w[i - 16]
+            + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3))
+            + w[i - 7]
+            + (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))
+          ) | 0);
+        const temp2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22))
+          + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+        hash = [(temp1 + temp2) | 0].concat(hash);
+        hash[4] = (hash[4] + temp1) | 0;
+      }
+      for (let i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+    }
+    for (let i = 0; i < 8; i++) {
+      for (let j = 3; j + 1; j--) {
+        const b = (hash[i] >> (j * 8)) & 255;
+        result += ((b < 16) ? 0 : '') + b.toString(16);
+      }
+    }
+    return result;
+  }
+
+  function solvePoW(salt, difficulty) {
+    const prefix = '0'.repeat(difficulty);
+    const MAX = 20000000; // hard cap so a bad difficulty can never hang the tab
+    for (let nonce = 0; nonce < MAX; nonce++) {
+      if (sha256hex(salt + ':' + nonce).indexOf(prefix) === 0) return String(nonce);
+    }
+    return '0';
+  }
+
+  function deviceFingerprint() {
+    try {
+      const parts = [
+        navigator.userAgent, navigator.language, (navigator.languages || []).join(','),
+        screen.width + 'x' + screen.height, screen.colorDepth,
+        new Date().getTimezoneOffset(), navigator.hardwareConcurrency || 0, navigator.platform || '',
+      ];
+      return sha256hex(parts.join('|')).slice(0, 32);
+    } catch (e) { return ''; }
+  }
+
+  // Fetch a challenge and solve it. Returns {} when the server has proof-of-work
+  // disabled (enabled === false). On a transient fetch failure we retry once,
+  // then throw a clear, retryable error rather than silently submitting an empty
+  // proof (which the server would reject with a misleading "verify your browser"),
+  // mirroring how the server fails OPEN on a CAPTCHA outage.
+  async function signupProof() {
+    let lastErr;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const c = await API.signupChallenge();
+        if (!c || c.enabled === false || !c.salt) return {}; // PoW is off, nothing to solve
+        return { powSalt: c.salt, powNonce: solvePoW(c.salt, c.difficulty || 4) };
+      } catch (e) { lastErr = e; }
+    }
+    throw new Error('Could not reach the server to verify your browser. Please try again in a moment.');
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('loginBtn');
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    btn.disabled = true;
+    btn.textContent = 'Logging in...';
+    try {
+      await API.login(email, password, {
+        hp_token: document.getElementById('loginHp').value,
+        turnstileToken: captchaToken('login'),
+      });
+      window.location.replace('/app');
+    } catch (err) {
+      captchaReset('login');
+      showAlert(document.getElementById('loginAlert'), err.message);
+      btn.disabled = false;
+      btn.textContent = 'Log in';
+    }
+  });
+
+  document.getElementById('signupForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('signupBtn');
+    const name = document.getElementById('signupName').value.trim();
+    const email = document.getElementById('signupEmail').value.trim();
+    const password = document.getElementById('signupPassword').value;
+    btn.disabled = true;
+    btn.textContent = 'Creating account...';
+    try {
+      const proof = await signupProof();
+      const ref = new URLSearchParams(location.search).get('ref') || '';
+      await API.signup(name, email, password, Object.assign({
+        fp: deviceFingerprint(), ref: ref,
+        hp_token: document.getElementById('signupHp').value,
+        turnstileToken: captchaToken('signup'),
+      }, proof));
+      window.location.replace('/app?welcome=1'); // land on Invite friends to kick off the growth loop
+    } catch (err) {
+      captchaReset('signup');
+      showAlert(document.getElementById('signupAlert'), err.message);
+      btn.disabled = false;
+      btn.textContent = 'Sign up';
+    }
+  });
+
+  animateCard();
+
+  // Progressive enhancement: stagger the promise rows in on load.
+  // The start state is set here in JS, so without JS the list is fully visible.
+  (function animatePromises() {
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const rows = document.querySelectorAll('.promise');
+    if (!window.anime || reduce || !rows.length) return;
+    anime.set(rows, { opacity: 0, translateY: 10 });
+    anime({
+      targets: rows,
+      opacity: [0, 1],
+      translateY: [10, 0],
+      duration: 480,
+      delay: anime.stagger(80, { start: 120 }),
+      easing: 'easeOutCubic'
+    });
+  })();
+})();

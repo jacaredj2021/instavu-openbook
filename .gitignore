@@ -1,0 +1,14 @@
+node_modules/
+.claude/
+uploads/*
+!uploads/.gitkeep
+openbook.db
+openbook.db-shm
+openbook.db-wal
+sessions.db
+.env
+npm-debug.log*
+
+# Private planning docs: kept local and in the Obsidian vault, NOT published.
+SPEC.md
+ROADMAP.md

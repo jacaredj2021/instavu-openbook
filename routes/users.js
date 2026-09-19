@@ -1,0 +1,568 @@
+// routes/users.js
+// Profiles: view a profile, edit your own, upload avatar and cover, search people.
+
+const express = require('express');
+const fs = require('fs');
+const crypto = require('crypto');
+const db = require('../db');
+const { requireAuth, publicUser } = require('../auth');
+const { upload } = require('../upload');
+const { entitlementsFor, storageLimitBytes } = require('../entitlements');
+
+const bcrypt = require('bcryptjs');
+const cleanup = require('../media/cleanup');
+const exporter = require('../export');
+
+const router = express.Router();
+
+// A single shared "[deleted]" ghost account. When a user deletes their account,
+// any post or comment that OTHER people replied to is handed to the ghost and
+// blanked, so a deletion erases the person without destroying everyone else's
+// replies (Reddit-style tombstoning). Created lazily, reused forever.
+async function ghostUserId() {
+  const GHOST_EMAIL = 'ghost@deleted.openbook.local';
+  const g = await db.prepare('SELECT id FROM users WHERE email = ?').get(GHOST_EMAIL);
+  if (g) return g.id;
+  const hash = bcrypt.hashSync(crypto.randomBytes(24).toString('hex'), 10);
+  const info = await db.prepare(
+    "INSERT INTO users (name, email, password_hash, email_verified, bio) VALUES ('[deleted]', ?, ?, 1, '')"
+  ).run(GHOST_EMAIL, hash);
+  return info.lastInsertRowid;
+}
+
+// Preserve threads others built on: reassign + blank the user's posts/comments
+// that have replies from someone else, BEFORE the user row (and its cascade) is
+// removed. Best-effort: any failure here must never block the actual deletion.
+async function tombstoneForOthers(userId, ghostId) {
+  const posts = await db.prepare(
+    'SELECT DISTINCT p.id FROM posts p JOIN comments c ON c.post_id = p.id WHERE p.user_id = ? AND c.user_id <> ?'
+  ).all(userId, userId);
+  for (const p of posts) {
+    await db.prepare(
+      "UPDATE posts SET user_id = ?, title = '', content = '[deleted]', image = '', file_url = '', file_name = '', bg = '' WHERE id = ?"
+    ).run(ghostId, p.id);
+  }
+  const comments = await db.prepare(
+    'SELECT DISTINCT c.id FROM comments c JOIN comments r ON r.parent_id = c.id WHERE c.user_id = ? AND r.user_id <> ?'
+  ).all(userId, userId);
+  for (const c of comments) {
+    await db.prepare("UPDATE comments SET user_id = ?, content = '[deleted]' WHERE id = ?").run(ghostId, c.id);
+  }
+}
+
+// The full, irreversible account erasure used by BOTH the owner "delete my
+// account" route and the unverified-account cleanup job. Tombstones threads others
+// built on, wipes the user's uploaded media (and purges the CDN), deletes the user
+// row (which cascades posts, comments, messages, friendships, votes, sessions, and
+// the rest), and writes a PII-free line to the public ledger. Best-effort tombstone
+// and ledger steps must never block the actual erasure.
+async function deleteUserCompletely(userId, reasonText) {
+  let ghostId = null;
+  try { ghostId = await ghostUserId(); await tombstoneForOthers(userId, ghostId); } catch (e) { /* erase regardless */ }
+  await cleanup.wipeUserMedia(userId);
+  // Explicitly delete this user's rows from EVERY table that references users, so
+  // the erasure never silently depends on the connection enforcing ON DELETE CASCADE
+  // (a remote libSQL/HTTP connection may not persist PRAGMA foreign_keys across
+  // requests). Read from the live schema so any future table is covered automatically.
+  // The tombstoned rows were reassigned to the ghost above, so this (WHERE col = the
+  // user's id) leaves them intact while removing everything still owned by the user.
+  try {
+    const tables = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    for (const t of tables) {
+      if (t.name === 'users' || t.name.indexOf('sqlite_') === 0) continue;
+      let fks = [];
+      try { fks = await db.prepare('PRAGMA foreign_key_list(' + t.name + ')').all(); } catch (e) { continue; }
+      const cols = fks.filter((fk) => fk.table === 'users').map((fk) => fk.from);
+      for (const col of cols) {
+        try { await db.prepare('DELETE FROM ' + t.name + ' WHERE "' + col + '" = ?').run(userId); } catch (e) { /* keep going */ }
+      }
+    }
+  } catch (e) { /* fall through to the user-row delete regardless */ }
+  await db.prepare('DELETE FROM users WHERE id = ?').run(userId); // removes the user row (cascade clears any remainder)
+  try {
+    const gid = ghostId || (await ghostUserId());
+    await db.prepare(
+      "INSERT INTO mod_actions (actor_id, action, target_type, target_id, reason, is_public) " +
+      "VALUES (?, 'account_deleted', 'account', 0, ?, 1)"
+    ).run(gid, reasonText || 'An account and all of its personal data were permanently deleted.');
+  } catch (e) { /* logging must never fail the deletion */ }
+}
+
+// The owner-facing view of an export job (never leaks the raw download token
+// except as part of the owner's own download URL).
+function publicJob(j) {
+  return {
+    id: j.id, status: j.status, format: j.format, bytes: j.bytes,
+    created_at: j.created_at, ready_at: j.ready_at, expires_at: j.expires_at,
+    error: j.error || '',
+    downloadUrl: j.status === 'ready' ? ('/api/users/me/export/' + j.id + '/download?token=' + j.token) : null,
+  };
+}
+
+// Parse a SQLite UTC timestamp to epoch ms.
+function tms(ts) {
+  if (!ts) return Date.now();
+  const iso = ts.indexOf('T') >= 0 ? ts : ts.replace(' ', 'T') + 'Z';
+  const ms = Date.parse(iso);
+  return isNaN(ms) ? Date.now() : ms;
+}
+
+// Escalating cooldown before each successive display-name change, in days. The
+// first change is measured from signup; later ones from the previous change.
+// 1st after 30 days, 2nd after 3 months, 3rd after another 3 months, then yearly.
+const NAME_CHANGE_WAIT_DAYS = [30, 90, 90, 365];
+
+// When is this user next allowed to change their display name? Returns epoch ms.
+async function nextNameChangeAt(userId, createdAt) {
+  const hist = await db
+    .prepare('SELECT changed_at FROM name_history WHERE user_id = ? ORDER BY changed_at DESC, id DESC')
+    .all(userId);
+  const count = hist.length;
+  const waitDays = NAME_CHANGE_WAIT_DAYS[Math.min(count, NAME_CHANGE_WAIT_DAYS.length - 1)];
+  const anchor = count === 0 ? createdAt : hist[0].changed_at;
+  return tms(anchor) + waitDays * 86400000;
+}
+
+// Search people by name OR @username (or list recent users when no query).
+router.get('/', requireAuth, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  let rows;
+  // The internal "[deleted]" ghost (the tombstone placeholder for erased accounts)
+  // is never a real person, so it must never surface in search or the browse list.
+  const GHOST = 'ghost@deleted.openbook.local';
+  if (q) {
+    // Allow searching by handle: "@netanel" and "netanel" both match the username, and
+    // a plain term also matches the display name. An exact handle match floats to the top.
+    const term = q.replace(/^@/, '');
+    const like = '%' + term + '%';
+    rows = await db
+      .prepare("SELECT * FROM users WHERE (name LIKE ? OR username LIKE ?) AND id != ? AND email != ? ORDER BY (lower(username) = lower(?)) DESC, name LIMIT 30")
+      .all(like, like, req.user.id, GHOST, term);
+  } else {
+    rows = await db
+      .prepare("SELECT * FROM users WHERE id != ? AND email != ? ORDER BY created_at DESC LIMIT 30")
+      .all(req.user.id, GHOST);
+  }
+  // A block makes the two parties undiscoverable to each other, so drop blocked users
+  // (either direction) from search results. Block-only: muting someone hides their
+  // posts from your feed but should not make them unsearchable.
+  const blocked = await require('../relations').blockedIds(req.user.id);
+  res.json({ users: rows.filter((u) => !blocked.has(u.id)).map(publicUser) });
+});
+
+// The official OpenBook account, for the "Follow OpenBook" discovery card. Returns
+// its public profile plus whether the current user already follows it (so the card can
+// hide once followed). user is null when there is no official account yet. Declared
+// before "/:id" so the literal path is not captured as an id.
+router.get('/official', requireAuth, async (req, res) => {
+  const u = await db.prepare('SELECT * FROM users WHERE is_official = 1 ORDER BY id LIMIT 1').get();
+  if (!u) return res.json({ user: null });
+  const f = await db.prepare('SELECT 1 AS x FROM follows WHERE follower_id = ? AND followee_id = ?').get(req.user.id, u.id);
+  res.json({ user: publicUser(u), isFollowing: !!f, isSelf: u.id === req.user.id });
+});
+
+// --- Unique @username (handle) ---
+// 3 to 20 chars, starts with a letter, letters/numbers/underscore only. A small
+// reserved set is blocked. Case-insensitive uniqueness is enforced at PUT time
+// plus a unique index in db.js as a backstop.
+// Allowed Premium profile theme ids (the colors/gradients live in the frontend
+// PROFILE_THEMES map; the server only validates the chosen id). Keep in sync.
+const THEME_IDS = new Set(['midnight', 'sunset', 'ocean', 'forest', 'rose', 'gold', 'aurora', 'graphite']);
+
+const USERNAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{2,19}$/;
+const RESERVED_USERNAMES = new Set(['admin', 'administrator', 'openbook', 'support', 'system', 'root', 'help', 'about', 'mod', 'moderator', 'official', 'staff', 'deleted', 'ghost', 'founder', 'me', 'api', 'null', 'undefined']);
+function usernameError(name) {
+  if (!USERNAME_RE.test(name)) return 'Usernames are 3 to 20 characters, start with a letter, and use only letters, numbers, or underscores.';
+  if (RESERVED_USERNAMES.has(name.toLowerCase())) return 'That username is reserved. Please choose another.';
+  return null;
+}
+
+// Live availability check for the username picker. Returns { available, error }.
+router.get('/me/username-available', requireAuth, async (req, res) => {
+  const u = String(req.query.u || '').trim().replace(/^@/, '');
+  const err = usernameError(u);
+  if (err) return res.json({ available: false, error: err });
+  const taken = await db.prepare('SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?').get(u, req.user.id);
+  res.json({ available: !taken, error: taken ? 'That username is taken.' : null });
+});
+
+// Update your own name and bio. The bio is always free to edit; the display name
+// is rate-limited, and each change leaves a public trail in name_history.
+router.put('/me', requireAuth, async (req, res) => {
+  const name = (req.body.name || '').trim();
+  const bio = (req.body.bio || '').trim().slice(0, 300); // bios are capped at 300 characters
+  if (!name) return res.status(400).json({ error: 'Your name cannot be empty' });
+
+  // Validate the @username up front (if provided) so an invalid/taken handle does
+  // not half-save the rest of the profile. undefined = leave as-is, null = clear.
+  let unameToSet;
+  if (req.body.username !== undefined) {
+    const uname = String(req.body.username || '').trim().replace(/^@/, '');
+    if (uname === '') unameToSet = null;
+    else {
+      const uerr = usernameError(uname);
+      if (uerr) return res.status(400).json({ error: uerr });
+      const taken = await db.prepare('SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?').get(uname, req.user.id);
+      if (taken) return res.status(409).json({ error: 'That username is taken. Please choose another.' });
+      unameToSet = uname;
+    }
+  }
+
+  // Validate the profile theme id (if provided). '' clears it. Applied only for
+  // Premium via auth.publicUser, but stored for anyone (re-applies on upgrade).
+  let themeToSet;
+  if (req.body.profileTheme !== undefined) {
+    const t = String(req.body.profileTheme || '').trim();
+    if (t === '' || THEME_IDS.has(t)) themeToSet = t;
+    else return res.status(400).json({ error: 'Unknown profile theme.' });
+  }
+
+  const cur = await db.prepare('SELECT name, created_at FROM users WHERE id = ?').get(req.user.id);
+
+  if (name !== cur.name) {
+    const allowedAt = await nextNameChangeAt(req.user.id, cur.created_at);
+    if (Date.now() < allowedAt) {
+      const when = new Date(allowedAt).toISOString().slice(0, 10);
+      return res.status(429).json({
+        error: 'Name changes are limited to keep identities stable. You can change your name again on ' + when + '.',
+        nextAllowedAt: allowedAt,
+      });
+    }
+    await db.prepare('INSERT INTO name_history (user_id, old_name) VALUES (?, ?)').run(req.user.id, cur.name);
+    await db.prepare('UPDATE users SET name = ?, bio = ? WHERE id = ?').run(name, bio, req.user.id);
+  } else {
+    await db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio, req.user.id);
+  }
+
+  // Profile accent color (a paid perk). Only updated when the field is present, so
+  // a bio-only save never clears it. Validated as a #rrggbb hex (or empty to clear).
+  if (req.body.accentColor !== undefined) {
+    const raw = String(req.body.accentColor || '').trim();
+    const accent = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : '';
+    await db.prepare('UPDATE users SET accent_color = ? WHERE id = ?').run(accent, req.user.id);
+  }
+
+  if (themeToSet !== undefined) {
+    await db.prepare('UPDATE users SET profile_theme = ? WHERE id = ?').run(themeToSet, req.user.id);
+  }
+
+  if (unameToSet !== undefined) {
+    try {
+      await db.prepare('UPDATE users SET username = ? WHERE id = ?').run(unameToSet, req.user.id);
+    } catch (e) {
+      return res.status(409).json({ error: 'That username is taken. Please choose another.' });
+    }
+  }
+
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(user) });
+});
+
+// Set who can see your profile: 'public' | 'friends' | 'private'. A dedicated
+// route so flipping visibility never touches the rest of the profile.
+router.put('/me/visibility', requireAuth, async (req, res) => {
+  const v = String((req.body && req.body.visibility) || '').trim();
+  if (['public', 'friends', 'private'].indexOf(v) < 0) return res.status(400).json({ error: 'Invalid profile visibility.' });
+  await db.prepare('UPDATE users SET profile_visibility = ? WHERE id = ?').run(v, req.user.id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(user) });
+});
+
+// Upload a new avatar.
+router.post('/me/avatar', requireAuth, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image was uploaded' });
+  const url = '/uploads/' + req.file.filename;
+  const prev = await db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.user.id);
+  await db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(url, req.user.id);
+  // The replaced avatar is no longer referenced anywhere; delete its bytes.
+  if (prev && prev.avatar && prev.avatar !== url) await cleanup.deleteMedia(prev.avatar, req.user.id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(user) });
+});
+
+// Upload a new cover photo.
+router.post('/me/cover', requireAuth, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image was uploaded' });
+  const url = '/uploads/' + req.file.filename;
+  const prev = await db.prepare('SELECT cover FROM users WHERE id = ?').get(req.user.id);
+  await db.prepare('UPDATE users SET cover = ? WHERE id = ?').run(url, req.user.id);
+  if (prev && prev.cover && prev.cover !== url) await cleanup.deleteMedia(prev.cover, req.user.id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(user) });
+});
+
+// Save the focal point (CSS object-position, e.g. "50% 30%") for the avatar and/or
+// cover, so the chosen part of each photo stays visible (drag to reposition).
+router.post('/me/photo-position', requireAuth, async (req, res) => {
+  const re = /^\d{1,3}(\.\d+)?% \d{1,3}(\.\d+)?%$/;
+  const sets = [];
+  const vals = [];
+  if (typeof req.body.avatarPos === 'string' && re.test(req.body.avatarPos)) { sets.push('avatar_pos = ?'); vals.push(req.body.avatarPos); }
+  if (typeof req.body.coverPos === 'string' && re.test(req.body.coverPos)) { sets.push('cover_pos = ?'); vals.push(req.body.coverPos); }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing valid to update' });
+  vals.push(req.user.id);
+  await db.prepare('UPDATE users SET ' + sets.join(', ') + ' WHERE id = ?').run(...vals);
+  const u = await db.prepare('SELECT avatar_pos, cover_pos FROM users WHERE id = ?').get(req.user.id);
+  res.json({ avatarPos: u.avatar_pos, coverPos: u.cover_pos });
+});
+
+// Delete your account and everything in it. This is the "100% control" promise in
+// its strongest form: it wipes your uploaded media from storage (and purges the
+// CDN), then deletes your user row, which cascades your posts, comments, messages,
+// friendships, votes, sessions, and the rest. Irreversible, so the current
+// password is required to confirm. This route is exempt from the email gate (it
+// lives under /users/me) so even an unverified account can be removed.
+router.delete('/me', requireAuth, async (req, res, next) => {
+  try {
+    const password = String((req.body && req.body.password) || '');
+    if (!password) return res.status(400).json({ error: 'Enter your password to confirm.' });
+    const row = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+    if (!row || !bcrypt.compareSync(password, row.password_hash)) {
+      return res.status(403).json({ error: 'That password is not correct.' });
+    }
+    // Erase the account and everything in it (shared with the unverified-cleanup
+    // job). The public ledger line notes this one was at the owner's request.
+    await deleteUserCompletely(req.user.id, 'An account and all of its personal data were permanently deleted at the owner request.');
+
+    res.clearCookie('tb_session');
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// --- Data export: download everything OpenBook holds about you (Promise #3) ---
+
+// Synchronous JSON export: every record about you, no media bytes. Instant.
+router.get('/me/export.json', requireAuth, async (req, res, next) => {
+  try {
+    const data = await exporter.buildJson(req.user.id);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="openbook-export-' + req.user.id + '.json"');
+    res.send(JSON.stringify(data, null, 2));
+  } catch (e) { next(e); }
+});
+
+// Start a full ZIP export (data + media), built in the background. Returns the
+// existing fresh job if one is already pending/ready (one per day per user).
+router.post('/me/export', requireAuth, async (req, res, next) => {
+  try {
+    const existing = await exporter.recentJob(req.user.id);
+    if (existing) return res.json({ job: publicJob(existing) });
+    const job = await exporter.createJob(req.user.id, 'zip');
+    res.status(202).json({ job: publicJob(job) });
+  } catch (e) { next(e); }
+});
+
+// Poll a ZIP export job.
+router.get('/me/export/:id', requireAuth, async (req, res, next) => {
+  try {
+    const j = await db.prepare('SELECT * FROM export_jobs WHERE id = ? AND user_id = ?').get(Number(req.params.id), req.user.id);
+    if (!j) return res.status(404).json({ error: 'Export not found' });
+    res.json({ job: publicJob(j) });
+  } catch (e) { next(e); }
+});
+
+// Download a ready ZIP export. Needs the one-time token and the owner session,
+// and refuses once the link has expired.
+router.get('/me/export/:id/download', requireAuth, async (req, res, next) => {
+  try {
+    const j = await db.prepare('SELECT * FROM export_jobs WHERE id = ? AND user_id = ?').get(Number(req.params.id), req.user.id);
+    if (!j) return res.status(404).json({ error: 'Export not found' });
+    if (String(req.query.token || '') !== j.token) return res.status(403).json({ error: 'Invalid download token' });
+    if (j.status !== 'ready' || !j.file || !fs.existsSync(j.file)) return res.status(409).json({ error: 'Export is not ready yet' });
+    const expMs = j.expires_at ? Date.parse(j.expires_at.indexOf('T') >= 0 ? j.expires_at : j.expires_at.replace(' ', 'T') + 'Z') : 0;
+    if (expMs && expMs < Date.now()) return res.status(410).json({ error: 'This export link has expired. Generate a new one.' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="openbook-export-' + req.user.id + '.zip"');
+    fs.createReadStream(j.file).pipe(res);
+  } catch (e) { next(e); }
+});
+
+// Your own transparency dashboard: the two reputation scores (karma vs standing)
+// plus your activity counts. reach_score is deliberately NOT included (the
+// graduated shadowban stays silent, even to the account owner).
+router.get('/me/stats', requireAuth, async (req, res) => {
+  const id = req.user.id;
+  const u = await db.prepare('SELECT karma, standing, trust_level, created_at, is_founder, supporter_tier, supporter_since, supporter_expires FROM users WHERE id = ?').get(id);
+  const posts = (await db.prepare('SELECT COUNT(*) c FROM posts WHERE user_id = ?').get(id)).c;
+  const comments = (await db.prepare('SELECT COUNT(*) c FROM comments WHERE user_id = ?').get(id)).c;
+  const communities = (await db.prepare('SELECT COUNT(*) c FROM community_members WHERE user_id = ?').get(id)).c;
+  const friends = (await db
+    .prepare("SELECT COUNT(*) c FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)")
+    .get(id, id)).c;
+  const reactionsReceived = (await db
+    .prepare(
+      `SELECT COUNT(*) c FROM reactions r
+       WHERE (r.target_type = 'post'    AND r.target_id IN (SELECT id FROM posts    WHERE user_id = ?))
+          OR (r.target_type = 'comment' AND r.target_id IN (SELECT id FROM comments WHERE user_id = ?))`
+    )
+    .get(id, id)).c;
+  res.json({
+    trust: {
+      karma: u.karma || 0,
+      standing: u.standing == null ? 100 : u.standing,
+      trustLevel: u.trust_level || 0,
+    },
+    stats: { posts, comments, communities, friends, reactionsReceived },
+    storage: { usedBytes: await cleanup.usageBytes(id), capBytes: storageLimitBytes(u) },
+    supporter: entitlementsFor(u),
+    created_at: u.created_at,
+  });
+});
+
+// Content analytics for the logged-in user: how their posts and reels are doing.
+router.get('/me/analytics', requireAuth, async (req, res) => {
+  const id = req.user.id;
+  const postViews = (await db.prepare('SELECT COALESCE(SUM(views), 0) v FROM posts WHERE user_id = ?').get(id)).v;
+  const reelViews = (await db.prepare('SELECT COALESCE(SUM(views), 0) v FROM reels WHERE user_id = ?').get(id)).v;
+  const likesReceived = (await db
+    .prepare(
+      `SELECT COUNT(*) c FROM reactions r
+       WHERE (r.target_type = 'post'    AND r.target_id IN (SELECT id FROM posts    WHERE user_id = ?))
+          OR (r.target_type = 'comment' AND r.target_id IN (SELECT id FROM comments WHERE user_id = ?))
+          OR (r.target_type = 'reel'    AND r.target_id IN (SELECT id FROM reels    WHERE user_id = ?))`
+    )
+    .get(id, id, id)).c;
+  const postComments = (await db
+    .prepare('SELECT COUNT(*) c FROM comments WHERE user_id != ? AND post_id IN (SELECT id FROM posts WHERE user_id = ?)')
+    .get(id, id)).c;
+  const reelComments = (await db
+    .prepare('SELECT COUNT(*) c FROM reel_comments WHERE user_id != ? AND reel_id IN (SELECT id FROM reels WHERE user_id = ?)')
+    .get(id, id)).c;
+  const netVotes = (await db
+    .prepare(
+      `SELECT COALESCE(SUM(value), 0) s FROM votes
+       WHERE (target_type = 'post'    AND target_id IN (SELECT id FROM posts    WHERE user_id = ?))
+          OR (target_type = 'comment' AND target_id IN (SELECT id FROM comments WHERE user_id = ?))`
+    )
+    .get(id, id)).s;
+
+  const topPosts = await Promise.all((await db
+    .prepare('SELECT id, title, content, type, community_id, views FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10')
+    .all(id))
+    .map(async (p) => ({
+      id: p.id,
+      label: (p.title || (p.content || '').slice(0, 60) || (p.type === 'image' ? '(photo)' : '(post)')),
+      community: !!p.community_id,
+      views: p.views || 0,
+      likes: (await db.prepare("SELECT COUNT(*) c FROM reactions WHERE target_type = 'post' AND target_id = ?").get(p.id)).c,
+      comments: (await db.prepare('SELECT COUNT(*) c FROM comments WHERE post_id = ?').get(p.id)).c,
+    })));
+
+  const reels = await Promise.all((await db
+    .prepare('SELECT id, caption, views FROM reels WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10')
+    .all(id))
+    .map(async (r) => ({
+      id: r.id,
+      label: (r.caption || '(reel)').slice(0, 60),
+      views: r.views || 0,
+      likes: (await db.prepare("SELECT COUNT(*) c FROM reactions WHERE target_type = 'reel' AND target_id = ?").get(r.id)).c,
+      comments: (await db.prepare('SELECT COUNT(*) c FROM reel_comments WHERE reel_id = ?').get(r.id)).c,
+    })));
+
+  res.json({
+    totals: {
+      views: postViews + reelViews,
+      likesReceived,
+      commentsReceived: postComments + reelComments,
+      netVotes,
+    },
+    topPosts,
+    reels,
+  });
+});
+
+// View one profile, with counts and the friendship status from your point of view.
+router.get('/:id', requireAuth, async (req, res) => {
+  // Accept a numeric id OR a @username, so shareable /u/<username> links resolve.
+  const raw = String(req.params.id || '').replace(/^@/, '');
+  const user = /^\d+$/.test(raw)
+    ? await db.prepare('SELECT * FROM users WHERE id = ?').get(Number(raw))
+    : await db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(raw);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const id = user.id;
+
+  const postsCount = (await db.prepare('SELECT COUNT(*) c FROM posts WHERE user_id = ?').get(id)).c;
+  const friendsCount = (await db
+    .prepare(
+      "SELECT COUNT(*) c FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)"
+    )
+    .get(id, id)).c;
+  const followersCount = (await db.prepare('SELECT COUNT(*) c FROM follows WHERE followee_id = ?').get(id)).c;
+  const followingCount = (await db.prepare('SELECT COUNT(*) c FROM follows WHERE follower_id = ?').get(id)).c;
+  // Does the viewer follow this profile? (false on your own profile.)
+  const isFollowing = id !== req.user.id
+    && !!(await db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(req.user.id, id));
+
+  let friendStatus = 'none';
+  if (id === req.user.id) {
+    friendStatus = 'self';
+  } else {
+    const f = await db
+      .prepare(
+        'SELECT * FROM friendships WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)'
+      )
+      .get(req.user.id, id, id, req.user.id);
+    if (f) {
+      if (f.status === 'accepted') friendStatus = 'friends';
+      else if (f.requester_id === req.user.id) friendStatus = 'requested'; // I sent the request
+      else friendStatus = 'incoming'; // they sent it to me
+    }
+  }
+
+  // A block (either direction) hides the whole profile. Distinguish "I blocked them"
+  // (the UI offers Unblock) from "they blocked me" (a neutral "not available").
+  const rel = require('../relations');
+  if (friendStatus !== 'self' && await rel.isBlocked(req.user.id, id)) {
+    return res.json({
+      user: Object.assign(publicUser(user), { bio: '', cover: '' }),
+      locked: 'blocked', iBlocked: await rel.iBlocked(req.user.id, id),
+      friendStatus: 'none', friendsCount: 0, postsCount: 0, followersCount: 0, followingCount: 0,
+      isFollowing: false, nameHistory: [], nextNameChange: null,
+    });
+  }
+  const mutedByMe = friendStatus !== 'self' && await rel.iMuted(req.user.id, id);
+
+  // Profile visibility gate: the owner always sees their own profile; others see
+  // it only if it is public, or friends-only and they are friends. Otherwise they
+  // get a minimal locked stub (name + avatar, no bio, no cover) and no posts.
+  const vis = user.profile_visibility || 'public';
+  const canSee = friendStatus === 'self' || vis === 'public' || (vis === 'friends' && friendStatus === 'friends');
+  if (!canSee) {
+    return res.json({
+      user: Object.assign(publicUser(user), { bio: '', cover: '' }),
+      locked: vis, // 'private' | 'friends'
+      friendStatus, friendsCount: 0, postsCount: 0, followersCount, followingCount, isFollowing,
+      nameHistory: [], nextNameChange: null,
+    });
+  }
+
+  // Public trail of previous display names, newest first.
+  const nameHistory = await db
+    .prepare('SELECT old_name AS name, changed_at FROM name_history WHERE user_id = ? ORDER BY changed_at DESC, id DESC')
+    .all(id);
+  // Only the owner is told when they may next change their name.
+  const nextNameChange = id === req.user.id ? await nextNameChangeAt(id, user.created_at) : null;
+
+  res.json({ user: publicUser(user), postsCount, friendsCount, followersCount, followingCount, friendStatus, isFollowing, mutedByMe, nameHistory, nextNameChange });
+});
+
+// A user's accepted friends. Gated like the profile: a block, or a private / friends-only
+// profile, hides the social graph from anyone who is not the owner (this list used to
+// leak it regardless of profile visibility).
+router.get('/:id/friends', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (id !== req.user.id && !(await require('../relations').canSeeSocialGraph(req.user.id, id))) return res.json({ users: [], locked: true });
+  const rows = await db
+    .prepare(
+      `SELECT u.* FROM friendships f
+       JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
+       WHERE f.status = 'accepted' AND (f.requester_id = ? OR f.addressee_id = ?)
+       ORDER BY u.name`
+    )
+    .all(id, id, id);
+  res.json({ users: rows.map(publicUser) });
+});
+
+// Exposed so the unverified-account cleanup job can reuse the exact same erasure.
+router.deleteUserCompletely = deleteUserCompletely;
+module.exports = router;

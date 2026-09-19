@@ -1,0 +1,157 @@
+// routes/reels.js
+// Reels: short vertical videos with a public discovery feed (everyone's reels,
+// newest first), likes, simple comments, and a view counter. Unlike the main
+// feed this is intentionally NOT friends-only: discovery is the whole point.
+
+const express = require('express');
+const db = require('../db');
+const { requireAuth, publicUser } = require('../auth');
+const { videoUpload } = require('../upload');
+const { notify } = require('../notify');
+const { trustRateLimit } = require('../antisybil');
+
+const cleanup = require('../media/cleanup');
+
+const router = express.Router();
+
+async function likeInfo(reelId, userId) {
+  const count = (await db
+    .prepare("SELECT COUNT(*) c FROM reactions WHERE target_type = 'reel' AND target_id = ?")
+    .get(reelId)).c;
+  const mine = await db
+    .prepare("SELECT 1 FROM reactions WHERE target_type = 'reel' AND target_id = ? AND user_id = ?")
+    .get(reelId, userId);
+  return { likeCount: count, liked: !!mine };
+}
+
+async function decorateReel(r, viewerId) {
+  const commentCount = (await db.prepare('SELECT COUNT(*) c FROM reel_comments WHERE reel_id = ?').get(r.id)).c;
+  const li = await likeInfo(r.id, viewerId);
+  return {
+    id: r.id,
+    video: r.video,
+    caption: r.caption,
+    views: r.views,
+    created_at: r.created_at,
+    author: publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(r.user_id)),
+    commentCount,
+    likeCount: li.likeCount,
+    liked: li.liked,
+    mine: r.user_id === viewerId,
+  };
+}
+
+// Discovery feed: the newest reels from everyone. Reels are public discovery, but a
+// block is still absolute: drop reels by anyone the viewer blocked (either direction)
+// or muted, like the home feed. Filter on the raw rows (before decorating) so the page
+// is not short and we do not waste queries decorating reels we will discard.
+router.get('/', requireAuth, async (req, res) => {
+  const rows = await db.prepare("SELECT * FROM reels WHERE visibility = 'visible' ORDER BY created_at DESC, id DESC LIMIT 60").all();
+  const hidden = await require('../relations').feedHiddenIds(req.user.id);
+  const visible = rows.filter((r) => r.user_id === req.user.id || !hidden.has(r.user_id));
+  res.json({ reels: await Promise.all(visible.map((r) => decorateReel(r, req.user.id))) });
+});
+
+// Post a reel (a video plus an optional caption).
+router.post('/', requireAuth, trustRateLimit('post'), videoUpload.single('video'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Choose a video to post' });
+  const caption = (req.body.caption || '').trim();
+  const video = '/uploads/' + req.file.filename;
+  const info = await db
+    .prepare('INSERT INTO reels (user_id, video, caption, media_hash) VALUES (?, ?, ?, ?)')
+    .run(req.user.id, video, caption, (req.file && req.file.mediaHash) || '');
+  const reel = await db.prepare('SELECT * FROM reels WHERE id = ?').get(info.lastInsertRowid);
+  res.json({ reel: await decorateReel(reel, req.user.id) });
+});
+
+// Toggle a like on a reel (stored as a 'like' reaction on a 'reel' target).
+router.post('/:id/like', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const reel = await db.prepare('SELECT * FROM reels WHERE id = ?').get(id);
+  if (!reel) return res.status(404).json({ error: 'Reel not found' });
+  if (reel.user_id !== req.user.id && await require('../relations').isBlocked(req.user.id, reel.user_id)) {
+    return res.status(403).json({ error: 'You cannot react to this.' });
+  }
+  const existing = await db
+    .prepare("SELECT 1 FROM reactions WHERE user_id = ? AND target_type = 'reel' AND target_id = ?")
+    .get(req.user.id, id);
+  if (existing) {
+    await db.prepare("DELETE FROM reactions WHERE user_id = ? AND target_type = 'reel' AND target_id = ?")
+      .run(req.user.id, id);
+  } else {
+    await db.prepare("INSERT INTO reactions (user_id, target_type, target_id, type) VALUES (?, 'reel', ?, 'like')")
+      .run(req.user.id, id);
+    if (reel.user_id !== req.user.id) await notify(reel.user_id, req.user.id, 'reaction', null);
+  }
+  res.json(await likeInfo(id, req.user.id));
+});
+
+// Count a view (best effort; no auth-tied dedupe, it is a vanity counter).
+router.post('/:id/view', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  await db.prepare('UPDATE reels SET views = views + 1 WHERE id = ?').run(id);
+  const r = await db.prepare('SELECT views FROM reels WHERE id = ?').get(id);
+  res.json({ views: r ? r.views : 0 });
+});
+
+// Comments on a reel. A comment by anyone the viewer blocked (either direction) or muted
+// is tombstoned (blank content, no identity), the same as post comments, so a block is
+// never bypassed by reading an existing comment on a shared reel.
+router.get('/:id/comments', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await db
+    .prepare('SELECT * FROM reel_comments WHERE reel_id = ? ORDER BY created_at ASC, id ASC')
+    .all(id);
+  const hidden = await require('../relations').feedHiddenIds(req.user.id);
+  res.json({
+    comments: await Promise.all(rows.map(async (c) => {
+      if (c.user_id !== req.user.id && hidden.has(c.user_id)) {
+        return { id: c.id, content: '', created_at: c.created_at, hidden: true, author: { id: 0, name: '', username: '' } };
+      }
+      return {
+        id: c.id,
+        content: c.content,
+        created_at: c.created_at,
+        author: publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(c.user_id)),
+      };
+    })),
+  });
+});
+
+router.post('/:id/comments', requireAuth, trustRateLimit('comment'), async (req, res) => {
+  const id = Number(req.params.id);
+  const content = (req.body.content || '').trim();
+  if (!content) return res.status(400).json({ error: 'Comment cannot be empty' });
+  const reel = await db.prepare('SELECT * FROM reels WHERE id = ?').get(id);
+  if (!reel) return res.status(404).json({ error: 'Reel not found' });
+  if (reel.user_id !== req.user.id && await require('../relations').isBlocked(req.user.id, reel.user_id)) {
+    return res.status(403).json({ error: 'You cannot comment on this.' });
+  }
+  const info = await db
+    .prepare('INSERT INTO reel_comments (reel_id, user_id, content) VALUES (?, ?, ?)')
+    .run(id, req.user.id, content);
+  if (reel.user_id !== req.user.id) await notify(reel.user_id, req.user.id, 'comment', null);
+  const c = await db.prepare('SELECT * FROM reel_comments WHERE id = ?').get(info.lastInsertRowid);
+  res.json({
+    comment: {
+      id: c.id,
+      content: c.content,
+      created_at: c.created_at,
+      author: publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(c.user_id)),
+    },
+  });
+});
+
+// Delete your own reel.
+router.delete('/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const reel = await db.prepare('SELECT * FROM reels WHERE id = ?').get(id);
+  if (!reel) return res.status(404).json({ error: 'Reel not found' });
+  if (reel.user_id !== req.user.id) return res.status(403).json({ error: 'You can only delete your own reels' });
+  await db.prepare('DELETE FROM reels WHERE id = ?').run(id);
+  await db.prepare("DELETE FROM reactions WHERE target_type = 'reel' AND target_id = ?").run(id);
+  if (reel.video) await cleanup.deleteMedia(reel.video, reel.user_id);
+  res.json({ ok: true });
+});
+
+module.exports = router;

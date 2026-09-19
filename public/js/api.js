@@ -1,0 +1,312 @@
+// api.js
+// A small wrapper around fetch so every call sends cookies and parses JSON,
+// plus named helpers for every endpoint. Shared by the landing page and the app.
+
+const API = {
+  async request(method, url, body, isForm) {
+    const opts = { method, credentials: 'same-origin', headers: {} };
+    if (body !== undefined && body !== null) {
+      if (isForm) {
+        opts.body = body; // FormData, browser sets the content type
+      } else {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+      }
+    }
+    const res = await fetch(url, opts);
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) {
+      const message = (data && data.error) || 'Request failed (' + res.status + ')';
+      const err = new Error(message);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  },
+  get(url) { return this.request('GET', url); },
+  post(url, body) { return this.request('POST', url, body); },
+  put(url, body) { return this.request('PUT', url, body); },
+  del(url) { return this.request('DELETE', url); },
+  postForm(url, formData) { return this.request('POST', url, formData, true); },
+
+  // Auth
+  signup(name, email, password, extra) { return this.post('/api/auth/signup', Object.assign({ name, email, password }, extra || {})); },
+  signupChallenge() { return this.get('/api/auth/challenge'); },
+  config() { return this.get('/api/config'); },
+  login(email, password, extra) { return this.post('/api/auth/login', Object.assign({ email, password }, extra || {})); },
+  logout() { return this.post('/api/auth/logout'); },
+  me() { return this.get('/api/auth/me'); },
+  resendVerification() { return this.post('/api/auth/resend-verification'); },
+  // Passkeys (WebAuthn). The server issues challenges and verifies signatures; the
+  // browser ceremony (navigator.credentials.*) lives in webauthn.js.
+  passkeyList() { return this.get('/api/auth/webauthn/credentials'); },
+  passkeyRegisterOptions() { return this.post('/api/auth/webauthn/register/options'); },
+  passkeyRegisterVerify(credential, label) { return this.post('/api/auth/webauthn/register/verify', { credential, label }); },
+  passkeyDelete(id) { return this.del('/api/auth/webauthn/credentials/' + id); },
+  passkeyAuthOptions() { return this.post('/api/auth/webauthn/auth/options'); },
+  passkeyAuthVerify(credential, fp) { return this.post('/api/auth/webauthn/auth/verify', { credential, fp }); },
+  forgotPassword(email) { return this.post('/api/auth/forgot-password', { email }); },
+  resetPassword(token, password) { return this.post('/api/auth/reset-password', { token, password }); },
+  support() { return this.get('/api/support'); },
+  tiers() { return this.get('/api/tiers'); },
+  communityStats() { return this.get('/api/community-stats'); },
+  announcements() { return this.get('/api/posts/feed/announcements'); },
+  modAnnounce(postId, announce) { return this.post('/api/moderation/announce', { postId, announce }); },
+  billingPlans() { return this.get('/api/billing/plans'); },
+  billingNetworks() { return this.get('/api/billing/networks'); },
+  claimCrypto(network, tier, txHash) { return this.post('/api/billing/crypto/claim', { network, tier, txHash }); },
+  cryptoTip(network, txHash) { return this.post('/api/billing/tip/crypto', { network, txHash }); },
+  myPayments() { return this.get('/api/billing/me'); },
+  supporterLeaderboard() { return this.get('/api/billing/leaderboard'); },
+  setSupporterVisibility(hidden) { return this.post('/api/billing/leaderboard-visibility', { hidden }); },
+  // Admin (supporter tiers)
+  adminGrantTier(userId, tier, days) { return this.post('/api/admin/grant', { userId, tier, days }); },
+  adminRevokeTier(userId) { return this.post('/api/admin/revoke', { userId }); },
+  adminSupporters() { return this.get('/api/admin/supporters'); },
+  adminAnalytics() { return this.get('/api/admin/analytics'); },
+  // Referrals
+  myReferral() { return this.get('/api/referrals/me'); },
+  referralLeaderboard() { return this.get('/api/referrals/leaderboard'); },
+  // Suggestion board (named listSuggestions to avoid clashing with friends' suggestions())
+  listSuggestions(status) { return this.get('/api/suggestions' + (status ? '?status=' + encodeURIComponent(status) : '')); },
+  createSuggestion(title, body, category) { return this.post('/api/suggestions', { title, body, category }); },
+  voteSuggestion(id, value) { return this.post('/api/suggestions/' + id + '/vote', { value }); },
+  suggestionStatus(id, status, note) { return this.post('/api/suggestions/' + id + '/status', { status, note }); },
+  deleteSuggestion(id) { return this.del('/api/suggestions/' + id); },
+
+  // Users
+  searchUsers(q) { return this.get('/api/users?q=' + encodeURIComponent(q || '')); },
+  officialAccount() { return this.get('/api/users/official'); },
+  // Safety: block (full cutoff), mute (soft hide), and the @mention preference.
+  blockUser(id) { return this.post('/api/relations/block/' + id); },
+  unblockUser(id) { return this.del('/api/relations/block/' + id); },
+  listBlocks() { return this.get('/api/relations/blocks'); },
+  muteUser(id) { return this.post('/api/relations/mute/' + id); },
+  unmuteUser(id) { return this.del('/api/relations/mute/' + id); },
+  listMutes() { return this.get('/api/relations/mutes'); },
+  setMentionPref(pref) { return this.put('/api/relations/mention-pref', { pref }); },
+  getProfile(id) { return this.get('/api/users/' + id); },
+  updateProfile(name, bio, accentColor, username, profileTheme) { return this.put('/api/users/me', { name, bio, accentColor, username, profileTheme }); },
+  setVisibility(visibility) { return this.put('/api/users/me/visibility', { visibility }); },
+  checkUsername(u) { return this.get('/api/users/me/username-available?u=' + encodeURIComponent(u)); },
+  myStats() { return this.get('/api/users/me/stats'); },
+  myAnalytics() { return this.get('/api/users/me/analytics'); },
+  deleteAccount(password) { return this.request('DELETE', '/api/users/me', { password }); },
+  startExport() { return this.post('/api/users/me/export'); },
+  exportJob(id) { return this.get('/api/users/me/export/' + id); },
+  // Community jury (Phase 4)
+  juryDuties() { return this.get('/api/moderation/jury'); },
+  juryCase(id) { return this.get('/api/moderation/jury/' + id); },
+  juryVote(id, vote) { return this.post('/api/moderation/jury/' + id + '/vote', { vote }); },
+  uploadAvatar(file) { const f = new FormData(); f.append('image', file); return this.postForm('/api/users/me/avatar', f); },
+  uploadCover(file) { const f = new FormData(); f.append('image', file); return this.postForm('/api/users/me/cover', f); },
+  photoPosition(body) { return this.post('/api/users/me/photo-position', body); },
+  userFriends(id) { return this.get('/api/users/' + id + '/friends'); },
+
+  // Posts
+  feed() { return this.get('/api/posts/feed'); },
+  homeFeed(sort, t) {
+    const params = [];
+    if (sort) params.push('sort=' + encodeURIComponent(sort));
+    if (t) params.push('t=' + encodeURIComponent(t));
+    return this.get('/api/posts/feed/home' + (params.length ? '?' + params.join('&') : ''));
+  },
+  discoverFeed(sort, t) {
+    const params = [];
+    if (sort) params.push('sort=' + encodeURIComponent(sort));
+    if (t) params.push('t=' + encodeURIComponent(t));
+    return this.get('/api/posts/feed/discover' + (params.length ? '?' + params.join('&') : ''));
+  },
+  userPosts(id) { return this.get('/api/posts/user/' + id); },
+  createPost(content, file, audience, opts) {
+    opts = opts || {};
+    const f = new FormData();
+    f.append('content', content || '');
+    if (audience) f.append('audience', audience);
+    if (file) f.append('image', file);
+    if (opts.bg) f.append('bg', opts.bg);
+    if (opts.fileUrl) { f.append('fileUrl', opts.fileUrl); f.append('fileName', opts.fileName || 'file'); }
+    if (opts.pollOptions && opts.pollOptions.length) f.append('pollOptions', JSON.stringify(opts.pollOptions));
+    if (opts.cw) { f.append('cw', '1'); f.append('cwText', opts.cwText || ''); }
+    return this.postForm('/api/posts', f);
+  },
+  uploadPostFile(file) { const f = new FormData(); f.append('file', file); return this.postForm('/api/posts/upload-file', f); },
+  pollVote(postId, optionId) { return this.post('/api/posts/' + postId + '/poll/vote', { optionId }); },
+  // Saved posts (private bookmarks)
+  savePost(id) { return this.post('/api/saves/' + id); },
+  unsavePost(id) { return this.del('/api/saves/' + id); },
+  savedPosts() { return this.get('/api/saves'); },
+  // Reposts (the Share button)
+  repost(id, comment) { return this.post('/api/shares/' + id, { comment: comment || '' }); },
+  unrepost(id) { return this.del('/api/shares/' + id); },
+  // Combined search (people + communities + posts)
+  searchAll(q) { return this.get('/api/search?q=' + encodeURIComponent(q || '')); },
+  deletePost(id) { return this.del('/api/posts/' + id); },
+  editPost(id, fields) { return this.put('/api/posts/' + id, fields); },
+  postHistory(id) { return this.get('/api/posts/' + id + '/history'); },
+  react(targetType, targetId, type) { return this.post('/api/reactions', { targetType, targetId, type }); },
+  comments(postId) { return this.get('/api/posts/' + postId + '/comments'); },
+  addComment(postId, content, parentId) { return this.post('/api/posts/' + postId + '/comments', { content, parentId }); },
+  deleteComment(id) { return this.del('/api/comments/' + id); },
+  editComment(id, content) { return this.put('/api/comments/' + id, { content }); },
+
+  // Friends
+  friends() { return this.get('/api/friends'); },
+  friendRequests() { return this.get('/api/friends/requests'); },
+  suggestions() { return this.get('/api/friends/suggestions'); },
+  sendRequest(id) { return this.post('/api/friends/request/' + id); },
+  acceptRequest(id) { return this.post('/api/friends/accept/' + id); },
+  declineRequest(id) { return this.post('/api/friends/decline/' + id); },
+  unfriend(id) { return this.del('/api/friends/' + id); },
+
+  // Follows (one-directional)
+  follow(id) { return this.post('/api/follows/' + id); },
+  unfollow(id) { return this.del('/api/follows/' + id); },
+  followers(id) { return this.get('/api/follows/' + id + '/followers'); },
+  following(id) { return this.get('/api/follows/' + id + '/following'); },
+
+  // Notifications
+  notifications() { return this.get('/api/notifications'); },
+  unreadNotifs() { return this.get('/api/notifications/unread-count'); },
+  markNotifsRead() { return this.post('/api/notifications/read'); },
+
+  // Stories
+  stories() { return this.get('/api/stories'); },
+  createStory(file, caption) {
+    const f = new FormData();
+    f.append('image', file);
+    f.append('caption', caption || '');
+    return this.postForm('/api/stories', f);
+  },
+
+  // Messages
+  conversations() { return this.get('/api/messages/conversations'); },
+  unreadMessages() { return this.get('/api/messages/unread-count'); },
+  history(userId) { return this.get('/api/messages/' + userId); },
+
+  // Web Push: fetch the public VAPID key, register or forget this browser's subscription.
+  pushVapid() { return this.get('/api/push/vapid'); },
+  pushSubscribe(subscription) { return this.post('/api/push/subscribe', { subscription: subscription }); },
+  pushUnsubscribe(endpoint) { return this.post('/api/push/unsubscribe', { endpoint: endpoint }); },
+
+  // Marketplace
+  listings(q, category, filters) {
+    const params = [];
+    if (q) params.push('q=' + encodeURIComponent(q));
+    if (category) params.push('category=' + encodeURIComponent(category));
+    if (filters) {
+      if (filters.condition && filters.condition !== 'All') params.push('condition=' + encodeURIComponent(filters.condition));
+      if (filters.location) params.push('location=' + encodeURIComponent(filters.location));
+      if (filters.minPrice) params.push('minPrice=' + encodeURIComponent(filters.minPrice));
+      if (filters.maxPrice) params.push('maxPrice=' + encodeURIComponent(filters.maxPrice));
+    }
+    return this.get('/api/marketplace' + (params.length ? '?' + params.join('&') : ''));
+  },
+  myListings() { return this.get('/api/marketplace/mine'); },
+  listing(id) { return this.get('/api/marketplace/' + id); },
+  createListing(fields, file) {
+    const f = new FormData();
+    Object.keys(fields).forEach((k) => f.append(k, fields[k] == null ? '' : fields[k]));
+    if (file) f.append('image', file);
+    return this.postForm('/api/marketplace', f);
+  },
+  toggleSold(id) { return this.post('/api/marketplace/' + id + '/sold'); },
+  deleteListing(id) { return this.del('/api/marketplace/' + id); },
+
+  // Marketplace escrow (protected transactions)
+  escrowConfig() { return this.get('/api/escrow/config'); },
+  escrowBuy(listingId) { return this.post('/api/escrow/buy', { listingId }); },
+  escrowOrders() { return this.get('/api/escrow/orders'); },
+  escrowOrder(id) { return this.get('/api/escrow/orders/' + id); },
+  escrowShipped(id, note) { return this.post('/api/escrow/orders/' + id + '/shipped', { note }); },
+  escrowReceived(id) { return this.post('/api/escrow/orders/' + id + '/received'); },
+  escrowDispute(id, reason) { return this.post('/api/escrow/orders/' + id + '/dispute', { reason }); },
+  escrowCancel(id) { return this.post('/api/escrow/orders/' + id + '/cancel'); },
+  escrowEvidence(id, fields, file) { const f = new FormData(); Object.keys(fields).forEach((k) => f.append(k, fields[k] == null ? '' : fields[k])); if (file) f.append('image', file); return this.postForm('/api/escrow/orders/' + id + '/evidence', f); },
+  escrowDisputes() { return this.get('/api/escrow/disputes'); },
+  escrowResolve(id, decision, note) { return this.post('/api/escrow/orders/' + id + '/resolve', { decision, note }); },
+
+  // Groups
+  groups() { return this.get('/api/groups'); },
+  group(id) { return this.get('/api/groups/' + id); },
+  createGroup(fields, coverFile) {
+    const f = new FormData();
+    Object.keys(fields).forEach((k) => f.append(k, fields[k] == null ? '' : fields[k]));
+    if (coverFile) f.append('cover', coverFile);
+    return this.postForm('/api/groups', f);
+  },
+  joinGroup(id) { return this.post('/api/groups/' + id + '/join'); },
+  leaveGroup(id) { return this.post('/api/groups/' + id + '/leave'); },
+  groupMembers(id) { return this.get('/api/groups/' + id + '/members'); },
+  groupPosts(id) { return this.get('/api/groups/' + id + '/posts'); },
+  createGroupPost(id, content, file) {
+    const f = new FormData();
+    f.append('content', content || '');
+    if (file) f.append('image', file);
+    return this.postForm('/api/groups/' + id + '/posts', f);
+  },
+  deleteGroup(id) { return this.del('/api/groups/' + id); },
+
+  // Albums
+  userAlbums(userId) { return this.get('/api/albums/user/' + userId); },
+  album(id) { return this.get('/api/albums/' + id); },
+  createAlbum(title) { return this.post('/api/albums', { title }); },
+  addAlbumPhoto(id, file, caption) {
+    const f = new FormData();
+    f.append('image', file);
+    f.append('caption', caption || '');
+    return this.postForm('/api/albums/' + id + '/photos', f);
+  },
+  deleteAlbum(id) { return this.del('/api/albums/' + id); },
+  deleteAlbumPhoto(albumId, photoId) { return this.del('/api/albums/' + albumId + '/photos/' + photoId); },
+
+  // Communities
+  communities() { return this.get('/api/communities'); },
+  community(id) { return this.get('/api/communities/' + id); },
+  createCommunity(fields, iconFile) {
+    const f = new FormData();
+    Object.keys(fields).forEach((k) => f.append(k, fields[k] == null ? '' : fields[k]));
+    if (iconFile) f.append('icon', iconFile);
+    return this.postForm('/api/communities', f);
+  },
+  joinCommunity(id) { return this.post('/api/communities/' + id + '/join'); },
+  leaveCommunity(id) { return this.post('/api/communities/' + id + '/leave'); },
+  communityMembers(id) { return this.get('/api/communities/' + id + '/members'); },
+  communityPosts(id, sort, t) {
+    const params = [];
+    if (sort) params.push('sort=' + encodeURIComponent(sort));
+    if (t) params.push('t=' + encodeURIComponent(t));
+    return this.get('/api/communities/' + id + '/posts' + (params.length ? '?' + params.join('&') : ''));
+  },
+  createCommunityPost(id, fields, file) {
+    const f = new FormData();
+    Object.keys(fields).forEach((k) => f.append(k, fields[k] == null ? '' : fields[k]));
+    if (file) f.append('image', file);
+    return this.postForm('/api/communities/' + id + '/posts', f);
+  },
+  deleteCommunity(id) { return this.del('/api/communities/' + id); },
+
+  // Votes + single post (for the community post detail view)
+  vote(targetType, targetId, value) { return this.post('/api/votes', { targetType, targetId, value }); },
+  getPost(id) { return this.get('/api/posts/' + id); },
+
+  // Moderation (Phase 3/4)
+  report(targetType, targetId, reasonCode, detail) { return this.post('/api/moderation/reports', { targetType, targetId, reasonCode, detail }); },
+  modReports() { return this.get('/api/moderation/reports'); },
+  dismissReport(id) { return this.post('/api/moderation/reports/' + id + '/dismiss'); },
+  modRemove(targetType, targetId, reason) { return this.post('/api/moderation/remove', { targetType, targetId, reason }); },
+  confirmIllegal(targetType, targetId) { return this.post('/api/moderation/illegal/confirm', { targetType, targetId }); },
+  dismissIllegal(targetType, targetId) { return this.post('/api/moderation/illegal/dismiss', { targetType, targetId }); },
+  modRestore(targetType, targetId) { return this.post('/api/moderation/restore', { targetType, targetId }); },
+  modLock(postId, locked) { return this.post('/api/moderation/lock', { postId, locked }); },
+  modPin(postId, pinned) { return this.post('/api/moderation/pin', { postId, pinned }); },
+  communityBan(communityId, userId, reason) { return this.post('/api/moderation/community/' + communityId + '/ban', { userId, reason }); },
+  communityUnban(communityId, userId) { return this.post('/api/moderation/community/' + communityId + '/unban', { userId }); },
+  communityModLog(communityId) { return this.get('/api/moderation/community/' + communityId + '/log'); },
+  fileAppeal(message, targetType, targetId) { return this.post('/api/moderation/appeals', { message, targetType, targetId }); },
+  modAppeals() { return this.get('/api/moderation/appeals'); },
+  resolveAppeal(id, decision) { return this.post('/api/moderation/appeals/' + id + '/resolve', { decision }); },
+};
+
+window.API = API;

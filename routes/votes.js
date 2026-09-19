@@ -1,0 +1,101 @@
+// routes/votes.js
+// Up/down voting on posts and comments. Votes are stored as rows (never just a
+// counter) so tallies can be re-run and audited. Casting the same vote again
+// clears it. A vote changes the content author's karma via the audit trail,
+// except for self-votes. Standing is never touched here (votes are not
+// punishment), which is the core OpenBook rule.
+
+const express = require('express');
+const db = require('../db');
+const { requireAuth } = require('../auth');
+const { canInteractPost } = require('../visibility');
+const { recordKarmaEvent, refreshTrustLevel } = require('../trust');
+const { trustWeight } = require('../ranking');
+const { canDownvote, MIN_DOWNVOTE_TL } = require('../antisybil');
+
+const router = express.Router();
+
+async function scoreOf(targetType, targetId) {
+  return (await db
+    .prepare('SELECT COALESCE(SUM(value), 0) s FROM votes WHERE target_type = ? AND target_id = ?')
+    .get(targetType, targetId)).s;
+}
+
+router.post('/', requireAuth, async (req, res) => {
+  const targetType = req.body.targetType;
+  const targetId = Number(req.body.targetId);
+  const value = Number(req.body.value);
+  if (targetType !== 'post' && targetType !== 'comment') {
+    return res.status(400).json({ error: 'Invalid target' });
+  }
+  if (value !== 1 && value !== -1 && value !== 0) {
+    return res.status(400).json({ error: 'Invalid vote' });
+  }
+  if (!targetId) return res.status(400).json({ error: 'Invalid target' });
+
+  // Resolve the underlying post (for permission) and the content author.
+  let post;
+  let authorId;
+  if (targetType === 'post') {
+    post = await db.prepare('SELECT * FROM posts WHERE id = ?').get(targetId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    authorId = post.user_id;
+  } else {
+    const comment = await db.prepare('SELECT * FROM comments WHERE id = ?').get(targetId);
+    if (!comment) return res.status(404).json({ error: 'Comment not found' });
+    authorId = comment.user_id;
+    post = await db.prepare('SELECT * FROM posts WHERE id = ?').get(comment.post_id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+  }
+  if (!(await canInteractPost(req.user.id, post))) {
+    return res.status(403).json({ error: 'You cannot vote here' });
+  }
+  // canInteractPost only checks the POST author. For a comment under a third party's
+  // post, also refuse if the viewer is blocked from the COMMENT author, so a block can
+  // never let one party move the other's karma (the core credible-neutrality rule).
+  if (authorId !== req.user.id && await require('../relations').isBlocked(req.user.id, authorId)) {
+    return res.status(403).json({ error: 'You cannot vote here' });
+  }
+
+  const existing = await db
+    .prepare('SELECT value FROM votes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+    .get(req.user.id, targetType, targetId);
+  const oldValue = existing ? existing.value : 0;
+  const effective = value === oldValue ? 0 : value; // same arrow again = clear
+
+  // The vote carries the voter's current trust weight so ranking can resist
+  // brigades (a new account's vote barely moves the rank). Recompute the level
+  // first so the weight is fresh; standing is never touched by voting.
+  const tl = await refreshTrustLevel(req.user.id);
+  const weight = trustWeight(tl);
+
+  // Anti-sybil: applying a downvote needs a minimum trust level, so day-old
+  // sockpuppets cannot brigade. Upvotes and clearing an existing vote stay open.
+  if (effective === -1 && !canDownvote(tl)) {
+    return res.status(403).json({
+      error: 'New accounts cannot downvote yet. Spend a little time on OpenBook and your downvotes will unlock.',
+      code: 'DOWNVOTE_LOCKED',
+      minTrustLevel: MIN_DOWNVOTE_TL,
+    });
+  }
+
+  if (effective === 0) {
+    await db.prepare('DELETE FROM votes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+      .run(req.user.id, targetType, targetId);
+  } else if (existing) {
+    await db.prepare("UPDATE votes SET value = ?, weight = ?, created_at = datetime('now') WHERE user_id = ? AND target_type = ? AND target_id = ?")
+      .run(effective, weight, req.user.id, targetType, targetId);
+  } else {
+    await db.prepare('INSERT INTO votes (user_id, target_type, target_id, value, weight) VALUES (?, ?, ?, ?, ?)')
+      .run(req.user.id, targetType, targetId, effective, weight);
+  }
+
+  if (authorId !== req.user.id) {
+    const delta = effective - oldValue;
+    if (delta !== 0) await recordKarmaEvent(authorId, delta, targetType + '_vote');
+  }
+
+  res.json({ score: await scoreOf(targetType, targetId), myVote: effective });
+});
+
+module.exports = router;
