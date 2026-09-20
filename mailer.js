@@ -61,9 +61,9 @@ async function sendVerificationEmail(to, link, name) {
 function resetEmailHtml(name, link) {
   return (
     '<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;color:#1c1c28">' +
-    '<h2 style="color:#4f46e5">Reset your OpenBook password</h2>' +
-    '<p>Hi' + (name ? ' ' + escapeHtml(name) : '') + ', we got a request to reset your password. Click below to choose a new one. This link expires in 1 hour.</p>' +
-    '<p style="margin:24px 0"><a href="' + link + '" style="background:#4f46e5;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Reset my password</a></p>' +
+    '<h2 style="color:#4f46e5">Redefinir sua senha do INSTAVU</h2>' +
+    '<p>Olá' + (name ? ' ' + escapeHtml(name) : '') + ', recebemos uma solicitação para redefinir sua senha. Clique abaixo para escolher uma nova senha. Este link expira em 1 hora.</p>' +
+    '<p style="margin:24px 0"><a href="' + link + '" style="background:#4f46e5;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Redefinir minha senha</a></p>' +
     '<p style="font-size:13px;color:#65656f">Or paste this link into your browser:<br>' + link + '</p>' +
     '<p style="font-size:12px;color:#9a9aa5">If you did not request this, you can safely ignore this email; your password will not change.</p>' +
     '</div>'
@@ -83,7 +83,7 @@ async function sendPasswordResetEmail(to, link, name) {
       body: JSON.stringify({
         from: EMAIL_FROM,
         to: [to],
-        subject: 'Reset your OpenBook password',
+        subject: 'Redefinir sua senha do INSTAVU',
         html: resetEmailHtml(name, link),
       }),
     });
