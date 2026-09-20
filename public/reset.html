@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reset your OpenBook password</title>
+  <title>Redefinir sua senha do INSTAVU</title>
   <script>try{var t=localStorage.getItem('ob_theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -13,26 +13,26 @@
       <section>
         <div class="auth-card">
           <div class="landing-logo" style="margin-bottom:14px">
-            <span class="brand-mark">O</span><span class="brand name">OpenBook</span>
+            <span class="brand-mark">I</span><span class="brand name">INSTAVU</span>
           </div>
-          <h2>Choose a new password</h2>
-          <p class="sub">Enter a new password for your account.</p>
+          <h2>Escolha uma nova senha</h2>
+          <p class="sub">Digite uma nova senha para sua conta.</p>
           <div id="alert"></div>
           <form id="resetForm">
             <div class="field">
-              <label for="pw">New password</label>
+              <label for="pw">Nova senha</label>
               <div class="pw-wrap">
-                <input class="input" type="password" id="pw" placeholder="At least 6 characters" autocomplete="new-password" required />
-                <button type="button" class="pw-toggle" data-pw="pw" aria-label="Show password">Show</button>
+                <input class="input" type="password" id="pw" placeholder="MÃ­nimo de 8 caracteres" autocomplete="new-password" required />
+                <button type="button" class="pw-toggle" data-pw="pw" aria-label="Mostrar senha">Mostrar</button>
               </div>
             </div>
             <div class="field">
-              <label for="pw2">Confirm new password</label>
-              <input class="input" type="password" id="pw2" placeholder="Repeat the password" autocomplete="new-password" required />
+              <label for="pw2">Confirme a nova senha</label>
+              <input class="input" type="password" id="pw2" placeholder="Repita a nova senha" autocomplete="new-password" required />
             </div>
-            <button class="btn btn-primary btn-block" type="submit" id="resetBtn">Update password</button>
+            <button class="btn btn-primary btn-block" type="submit" id="resetBtn">Atualizar senha</button>
           </form>
-          <div class="auth-switch"><a href="/">Back to login</a></div>
+          <div class="auth-switch"><a href="/">Voltar para o login</a></div>
         </div>
       </section>
     </div>
@@ -53,7 +53,7 @@
           var inp = document.getElementById(b.getAttribute('data-pw'));
           var showing = inp.type === 'password';
           inp.type = showing ? 'text' : 'password';
-          b.textContent = showing ? 'Hide' : 'Show';
+          b.textContent = showing ? 'Ocultar' : 'Mostrar';
         });
       });
 
@@ -73,7 +73,7 @@
           setTimeout(function () { location.href = '/'; }, 2000);
         } catch (err) {
           show(err.message);
-          btn.disabled = false; btn.textContent = 'Update password';
+          btn.disabled = false; btn.textContent = 'Atualizar senha';
         }
       });
     })();

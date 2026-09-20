@@ -1,4 +1,5 @@
 // server.js
+try { process.loadEnvFile('.env'); } catch (e) { if (e && e.code !== 'ENOENT') throw e; }
 // OpenBook entry point. Sets up Express, static files, the JSON API routes,
 // and the Socket.IO server for real time chat and live notifications.
 
