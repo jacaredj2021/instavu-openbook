@@ -61,6 +61,15 @@ const API = {
   supporterLeaderboard() { return this.get('/api/billing/leaderboard'); },
   setSupporterVisibility(hidden) { return this.post('/api/billing/leaderboard-visibility', { hidden }); },
   // Admin (supporter tiers)
+  adminUsers(q, limit) {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (limit) params.set('limit', limit);
+    return this.get('/api/admin/users' + (params.toString() ? '?' + params.toString() : ''));
+  },
+  adminSetAdmin(userId, enabled) {
+    return this.post('/api/admin/users/' + userId + '/admin', { enabled });
+  },
   adminGrantTier(userId, tier, days) { return this.post('/api/admin/grant', { userId, tier, days }); },
   adminRevokeTier(userId) { return this.post('/api/admin/revoke', { userId }); },
   adminSupporters() { return this.get('/api/admin/supporters'); },

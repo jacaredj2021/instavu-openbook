@@ -1,4 +1,4 @@
-// routes/admin.js
+﻿// routes/admin.js
 // Platform-admin endpoints. Right now this is just supporter-tier management, so
 // tiers can be granted and tested before any payment rail exists (and so the
 // referral system and billing can reuse grantTier). Admin status comes from the
@@ -90,6 +90,79 @@ router.get('/analytics', requireAuth, requireAdmin, async (req, res) => {
     topPages,
     entryPages,
     topButtons,
+  });
+});
+
+// User management ? platform administration.
+// Listing is available to admins; changing admin status is founder-only.
+function requireFounder(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'You need to log in first' });
+  if (!req.user.is_founder) return res.status(403).json({ error: 'Founder only' });
+  next();
+}
+
+router.get('/users', requireAuth, requireAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+
+  let users;
+  if (q) {
+    const like = '%' + q.replace(/[%_]/g, '\\$&') + '%';
+    users = await db.prepare(
+      "SELECT id, name, username, email, created_at, is_admin, is_founder, is_official, supporter_tier, supporter_since, supporter_expires, standing, karma " +
+      "FROM users WHERE name LIKE ? OR username LIKE ? OR email LIKE ? " +
+      "ORDER BY created_at DESC LIMIT ?"
+    ).all(like, like, like, limit);
+  } else {
+    users = await db.prepare(
+      "SELECT id, name, username, email, created_at, is_admin, is_founder, is_official, supporter_tier, supporter_since, supporter_expires, standing, karma " +
+      "FROM users ORDER BY created_at DESC LIMIT ?"
+    ).all(limit);
+  }
+
+  res.json({ users, canManageAdmins: !!req.user.is_founder });
+});
+router.post('/users/:id/admin', requireAuth, requireAdmin, requireFounder, async (req, res) => {
+  const userId = Number(req.params.id);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
+
+  const target = await db.prepare(
+    'SELECT id, name, username, email, is_admin, is_founder FROM users WHERE id = ?'
+  ).get(userId);
+
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  if (target.is_founder) {
+    return res.status(403).json({ error: 'The founder account cannot be changed' });
+  }
+
+  const enabled = req.body && (
+    req.body.enabled === true ||
+    req.body.enabled === 1 ||
+    req.body.enabled === '1'
+  );
+
+  await db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(enabled ? 1 : 0, userId);
+
+  await db.prepare(
+    "INSERT INTO mod_actions (actor_id, action, target_type, target_id, reason, is_public) VALUES (?, ?, 'user', ?, ?, 0)"
+  ).run(
+    req.user.id,
+    enabled ? 'grant_admin' : 'revoke_admin',
+    userId,
+    enabled ? 'Founder granted platform admin access' : 'Founder revoked platform admin access'
+  );
+
+  logger.info(
+    { founder: req.user.id, userId, enabled },
+    enabled ? 'founder granted admin access' : 'founder revoked admin access'
+  );
+
+  res.json({
+    ok: true,
+    user: Object.assign({}, target, { is_admin: enabled ? 1 : 0 })
   });
 });
 

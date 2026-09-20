@@ -712,7 +712,7 @@
   function renderLeftRail() {
     const rail = document.getElementById('leftRail');
     // The Admin entry (formerly "Owner dashboard") is for the founder only.
-    const isOwner = (ME.email || '').toLowerCase() === 'nmservicesww@gmail.com';
+    const isOwner = !!(ME && (ME.founder || ME.isAdmin));
     rail.innerHTML =
       '<div class="card" style="padding:8px">' +
       '<div class="side-link" data-go="profile">' + avatar(ME, 32) + '<span>' + esc(ME.name) + '</span></div>' +
@@ -1607,6 +1607,7 @@
     }
     const signups = (d.signupsByDay || []).slice().reverse().map((r) => ({ label: r.d, c: r.c }));
     view.innerHTML =
+      '<div id="admin-users-panel"></div>' +
       '<div class="card"><div class="pname">&#128202; Owner analytics</div>' +
       '<div class="shint" style="font-size:13px">Private to platform admins. Aggregate usage only, no personal data.</div></div>' +
       '<div class="section-title">Users</div><div class="dash-grid">' +
@@ -1627,6 +1628,87 @@
       '<div class="card"><div class="section-title">Top entry pages</div>' + barList(d.entryPages) + '</div>' +
       '<div class="card"><div class="section-title">Most viewed pages</div>' + barList(d.topPages) + '</div>' +
       '<div class="card"><div class="section-title">Most clicked buttons</div>' + barList(d.topButtons) + '</div>';
+
+    if (ME && (ME.founder || ME.isFounder || ME.is_founder)) {
+      const adminPanel = document.querySelector('#admin-users-panel');
+      if (adminPanel) {
+        adminPanel.innerHTML =
+          '<div class="card">' +
+          '<div class="pname">Gestao de usuarios</div>' +
+          '<div class="shint" style="font-size:13px">Somente o fundador pode promover ou remover administradores.</div>' +
+          '<div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap">' +
+          '<input id="admin-user-search" class="input" placeholder="Buscar nome, usuario ou e-mail" style="flex:1;min-width:220px">' +
+          '<button class="btn" id="admin-user-search-btn">Buscar</button>' +
+          '</div>' +
+          '<div id="admin-user-list"><div class="empty">Carregando usuarios...</div></div>' +
+          '</div>';
+
+        const input = adminPanel.querySelector('#admin-user-search');
+        const button = adminPanel.querySelector('#admin-user-search-btn');
+        const list = adminPanel.querySelector('#admin-user-list');
+
+        const loadAdminUsers = async () => {
+          list.innerHTML = '<div class="empty">Carregando usuarios...</div>';
+
+          try {
+            const result = await API.adminUsers(input.value.trim(), 100);
+            const users = result.users || [];
+
+            if (!users.length) {
+              list.innerHTML = '<div class="empty">Nenhum usuario encontrado.</div>';
+              return;
+            }
+
+            list.innerHTML = users.map((u) => {
+              const role = u.is_founder
+                ? '<span class="pill">Fundador</span>'
+                : (u.is_admin ? '<span class="pill">Administrador</span>' : '<span class="muted">Membro</span>');
+
+              const action = u.is_founder
+                ? '<span class="muted">Protegido</span>'
+                : '<button class="btn admin-user-toggle" data-user-id="' + u.id + '" data-enabled="' + (u.is_admin ? '0' : '1') + '">' +
+                  (u.is_admin ? 'Remover admin' : 'Tornar admin') +
+                  '</button>';
+
+              return '<div class="contact" style="align-items:center;gap:12px;padding:12px 0">' +
+                '<div style="flex:1">' +
+                '<strong>' + esc(u.name || '') + '</strong>' +
+                '<div class="ctime">@' + esc(u.username || '') + ' - ' + esc(u.email || '') + '</div>' +
+                '<div style="margin-top:5px">' + role + '</div>' +
+                '</div>' +
+                '<div>' + action + '</div>' +
+                '</div>';
+            }).join('');
+
+            list.querySelectorAll('.admin-user-toggle').forEach((btn) => {
+              btn.onclick = async () => {
+                const userId = Number(btn.dataset.userId);
+                const enabled = btn.dataset.enabled === '1';
+                btn.disabled = true;
+
+                try {
+                  await API.adminSetAdmin(userId, enabled);
+                  toast(enabled ? 'Administrador promovido.' : 'Administrador removido.');
+                  await loadAdminUsers();
+                } catch (e) {
+                  toast(e.message || 'Nao foi possivel alterar a permissao.');
+                  btn.disabled = false;
+                }
+              };
+            });
+          } catch (e) {
+            list.innerHTML = '<div class="empty">' + esc(e.message || 'Erro ao carregar usuarios.') + '</div>';
+          }
+        };
+
+        button.onclick = loadAdminUsers;
+        input.onkeydown = (e) => {
+          if (e.key === 'Enter') loadAdminUsers();
+        };
+
+        loadAdminUsers();
+      }
+    }
     renderRightRail();
   }
 
